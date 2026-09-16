@@ -1,0 +1,43 @@
+import { afterEach, expect, it } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AccountStore } from "../server/store";
+const roots: string[] = [];
+afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+it("persists prepared selection separately and prevents removing an account used by an agent", async () => {
+ const root = await mkdtemp(join(tmpdir(), "account-store-")); roots.push(root);
+ const store = new AccountStore(root); await store.initialize({claude:join(root,"claude"),codex:join(root,"codex")});
+ const a = await store.add("codex", "Work");
+ await store.prepare("agent-1", "codex", a.id);
+ expect((await store.snapshot()).bindings[0]).toMatchObject({ currentAccountId: "system-codex", pendingAccountId: a.id });
+ const reopened = new AccountStore(root);
+ expect((await reopened.snapshot()).bindings[0]?.pendingAccountId).toBe(a.id);
+ await expect(reopened.remove(a.id)).rejects.toThrow(/used/);
+});
+it("migrates only exact legacy system labels and preserves user labels and registry state", async () => {
+ const root = await mkdtemp(join(tmpdir(), "account-label-migration-")); roots.push(root);
+ const sourceHomes = {claude:join(root,"claude"),codex:join(root,"codex")};
+ const store = new AccountStore(root); await store.initialize(sourceHomes);
+ const managed = await store.add("codex", "Поточний CLI · Codex");
+ await store.prepare("existing-agent", "codex", managed.id);
+ await store.change(state => {
+  state.accounts.find(account => account.id === "system-claude")!.label = "Поточний CLI · Claude";
+  state.accounts.find(account => account.id === "system-codex")!.label = "Поточний CLI · Codex";
+  const system = state.accounts.find(account => account.id === "system-codex")!;
+  state.accounts.push({...system,id:"custom-system",label:"Мій Codex"});
+  state.accounts.push({...system,id:"near-match-system",label:"Поточний CLI · Codex custom"});
+  state.accounts.push({...system,id:"wrong-provider-system",label:"Поточний CLI · Claude"});
+  state.defaults.codex = managed.id;
+  state.integration.error = "Історична помилка";
+ });
+ const before = await store.read();
+ const reopened = new AccountStore(root); await reopened.initialize(sourceHomes);
+ const expected = structuredClone(before);
+ expected.accounts.find(account => account.id === "system-claude")!.label = "Current CLI · Claude";
+ expected.accounts.find(account => account.id === "system-codex")!.label = "Current CLI · Codex";
+ expect(await reopened.read()).toEqual(expected);
+ const migratedBytes = await readFile(join(root,"registry.json"),"utf8");
+ await reopened.initialize(sourceHomes);
+ expect(await readFile(join(root,"registry.json"),"utf8")).toBe(migratedBytes);
+});

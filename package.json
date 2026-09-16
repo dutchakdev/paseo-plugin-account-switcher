@@ -1,0 +1,55 @@
+{
+  "name": "paseo-plugin-account-switcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "dutchakdev",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "keywords": [
+    "paseo",
+    "plugin",
+    "claude",
+    "codex",
+    "accounts",
+    "quotas"
+  ],
+  "description": "Per-agent Claude and Codex accounts with account-wide quota monitoring",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config tests/vitest.config.ts",
+    "build": "node scripts/build.mjs",
+    "check": "npm run build && npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5"
+  },
+  "devDependencies": {
+    "@getpaseo/client": "0.8.0",
+    "@getpaseo/plugin": "0.8.0",
+    "@getpaseo/protocol": "0.8.0",
+    "@tanstack/react-query": "^5.90.11",
+    "@types/node": "^22.0.0",
+    "@types/react": "~19.2.0",
+    "esbuild": "^0.25.12",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "zod": "^4.4.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dutchakdev/paseo-plugin-account-switcher.git"
+  },
+  "homepage": "https://github.com/dutchakdev/paseo-plugin-account-switcher#readme",
+  "bugs": {
+    "url": "https://github.com/dutchakdev/paseo-plugin-account-switcher/issues"
+  }
+}

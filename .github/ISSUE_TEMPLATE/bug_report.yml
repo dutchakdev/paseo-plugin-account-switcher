@@ -1,0 +1,53 @@
+name: Bug report
+description: Report an account, sign-in, switching, or limits problem.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include enough detail to reproduce the problem. Do not attach credentials, authorization links, one-time codes, account registry files, or unredacted provider output. Redact private identities and paths from logs and screenshots.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed problem and any visible error.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Accounts on…
+        2. Select…
+        3. Observe…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include versions where available. Do not include host addresses or account identities.
+      value: |
+        Plugin version or revision:
+        Daemon OS and version:
+        Paseo daemon version:
+        Paseo client type and version (desktop / web / native mobile):
+        Node.js version:
+        Claude Code version:
+        Codex version:
+        Provider involved:
+        Installation source (directory / Git):
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Optional. Include only the relevant error and remove all authentication details.

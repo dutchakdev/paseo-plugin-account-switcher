@@ -1,0 +1,1 @@
+{ "id": "account-switcher", "requirements": { "paseo": "^0.8.0" }, "build": [["npm", "ci", "--ignore-scripts", "--legacy-peer-deps"], ["npm", "run", "build"]] }

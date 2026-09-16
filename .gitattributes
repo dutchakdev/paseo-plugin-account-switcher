@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Preserve third-party license text exactly as distributed upstream.
+licenses/*.txt -whitespace
