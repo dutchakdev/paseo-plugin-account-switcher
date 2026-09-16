@@ -4,8 +4,6 @@ Use multiple Claude and ChatGPT/Codex subscription accounts in Paseo. Choose an 
 
 ![Account Switcher in Paseo: Claude and Codex account limits, the in-chat account dialog, and the composer account chip.](docs/assets/account-switcher-overview.png)
 
-*Edited screenshot collage. Personal information is hidden; usage values are examples from the captured session.*
-
 - **Sign in from Paseo.** Add an account, finish the official provider sign-in, and return to your chat.
 - **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. Changes apply only when you choose **Apply**.
 - **Keep your setup.** Profiles separate credentials while sharing provider settings, skills, and session history.
