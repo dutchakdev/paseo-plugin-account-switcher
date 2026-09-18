@@ -1,11 +1,11 @@
 # Verification
 
-Last checked: **2026-09-16**. These results describe observed checks, not a guarantee
+Last checked: **2026-09-18**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
 
 ## Automated checks
 
-Clean source snapshots were installed with `npm ci --ignore-scripts --legacy-peer-deps`,
+On **2026-09-16**, clean source snapshots were installed with `npm ci --ignore-scripts --legacy-peer-deps`,
 then checked with `npm run check`.
 
 | Platform | Node.js | Build | Typecheck | Tests |
@@ -33,7 +33,22 @@ The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
 
-## Live checks
+## Paseo 0.9 compatibility — 2026-09-18
+
+- The manifest accepts `^0.8.0 || 0.9.*`; development SDK dependencies remain
+  pinned to 0.8.0.
+- The published Paseo **0.9.0-beta.2** manifest reader and compatibility checker
+  accepted 0.8.0, 0.9.0-beta.1, 0.9.0-beta.2, 0.9.0, 0.9.1, and 0.9.99 for both
+  daemon and app checks. They rejected 0.7.2 and 0.10.0. Checks against future
+  stable version numbers validate the range, not those future runtimes.
+- On macOS, `npm run check` passed: launcher build, typecheck, and **209/209 tests**.
+- An isolated **0.9.0-beta.2** daemon loaded the plugin as `running`, served its
+  compiled client bundle, and handled an RPC with the expected missing-session
+  error. Provider homes were empty; no agent or sign-in was started. This verifies
+  loading and compilation, not UI interactions in a 0.9 client.
+- Reload on the existing local **0.8.0** daemon returned `running`.
+
+## Live checks — 2026-09-16
 
 ### macOS
 

@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-Account Switcher is an independent Paseo 0.8 plugin. It uses public plugin and provider APIs; no Paseo core patch is required.
+Account Switcher is an independent plugin for Paseo 0.8.x and 0.9.x, including beta releases. It uses public plugin and provider APIs; no Paseo core patch is required.
 
 ```mermaid
 flowchart LR
@@ -57,7 +57,7 @@ The daemon runs the official provider CLI under the managed profile. Claude uses
 
 A persisted reservation prevents another sign-in or account switch while a process may still use the profile. Completion requires the matching process receipt and an identity check. Cancel stops the process before releasing the reservation; uncertain termination keeps the account reserved for recovery. Reload cleanup stops active sign-ins.
 
-The UI uses the public host modal and clipboard API. In the Electron desktop app, it offers copying the link into the user's ordinary browser because the public SDK has no desktop system-browser opener. Web uses a new browser tab; native mobile uses React Native Linking. Automatic opening or copying is best effort, with explicit buttons and selectable text as fallbacks. Codex browser callbacks require a browser on the daemon machine; device-code login works from another device.
+The UI uses the public host modal and clipboard API. In the Electron desktop app, it keeps the Paseo 0.8-compatible copy-link flow: users paste the link into their ordinary browser. Web uses a new browser tab; native mobile uses React Native Linking. Automatic opening or copying is best effort, with explicit buttons and selectable text as fallbacks. Codex browser callbacks require a browser on the daemon machine; device-code login works from another device.
 
 ## Limits and identity
 
