@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-Account Switcher is an independent plugin for Paseo 0.8.x and 0.9.x, including beta releases. It uses public plugin and provider APIs; no Paseo core patch is required.
+Account Switcher is an independent plugin for Paseo 0.8.x, 0.9.x, and 0.10.x, including beta releases. It uses public plugin and provider APIs; no Paseo core patch is required.
 
 ```mermaid
 flowchart LR

@@ -1,6 +1,6 @@
 # Verification
 
-Last checked: **2026-09-18**. These results describe observed checks, not a guarantee
+Last checked: **2026-09-28**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
 
 ## Automated checks
@@ -32,6 +32,21 @@ texts. Rebuilding from a different working directory produced identical output.
 The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
+
+## Paseo 0.10 compatibility — 2026-09-28
+
+- The manifest accepts `^0.8.0 || 0.9.* || 0.10.*`; development SDK dependencies
+  remain pinned to 0.8.0.
+- The published Paseo **0.10.0-beta.1** compatibility checker accepted 0.8.0,
+  0.9.0-beta.1, 0.9.2, 0.10.0-beta.1, 0.10.0-beta.7, 0.10.0, 0.10.3, and 0.10.99
+  for both daemon and app checks. It rejected 0.7.2, 0.11.0-beta.1, and 0.11.0.
+  Checks against future version numbers validate the range, not those runtimes.
+- With the SDK swapped to **0.10.0-beta.1** in a scratch copy, typecheck passed and
+  **209/209 tests** passed. With the pinned 0.8.0 SDK, `npm run check` passed:
+  launcher build, typecheck, and **209/209 tests**.
+- The local **0.10.0-beta.1** daemon, which had refused the previous
+  `^0.8.0 || 0.9.*` manifest, reloaded the plugin as `running` and logged
+  `Plugin ready`. This verifies loading, not UI interactions in a 0.10 client.
 
 ## Paseo 0.9 compatibility — 2026-09-18
 
