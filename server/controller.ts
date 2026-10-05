@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { lstat, readFile, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoApi } from "./paseo-api";
 import { AccountSchema, type LoginSession, type Provider } from "../shared/contracts";
 import { AccountStore, accountFrom, type Registry, type StoredAccount } from "./store";
 import { prepareProfile } from "./profiles";

@@ -1,7 +1,9 @@
-import type { PaseoAgent } from "@getpaseo/client";
 import type { PluginButtonIcon, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { listAccounts, listUsage, type AccountState, type UsageSnapshot } from "../shared/contracts";
 import { currentAccount, currentAccountName, errorMessage, supportedProvider, usageSummary } from "./format";
+
+// npm installs omit devDependencies, so `@getpaseo/client` types are named through the host SDK entry.
+type PaseoAgent = Awaited<ReturnType<PluginClientContext["paseo"]["agents"]["list"]>>["entries"][number]["agent"];
 
 export type PillTarget = Readonly<{ workspaceId: string; agentId: string }>;
 

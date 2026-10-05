@@ -23,3 +23,6 @@ usage-cache.json
 *.pem
 *.key
 *.tgz
+
+# Backup of the Git manifest while npm pack runs.
+/paseo-plugin.json.git

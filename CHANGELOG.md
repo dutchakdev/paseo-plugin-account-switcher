@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-10-05
+
+### Added
+
+- Support for Paseo 0.10.x and 0.11.x, including beta releases.
+- npm distribution as `paseo-plugin-account-switcher` for Paseo 0.9 and newer. The
+  package ships the generated launcher and needs no build on the daemon host.
+
+### Fixed
+
+- Loading from an npm installation, where development dependencies are absent:
+  `@getpaseo/client` types are now named through the plugin SDK entries.
+
+## 0.1.0
 
 ### Added
 

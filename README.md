@@ -12,7 +12,7 @@ Use multiple Claude and ChatGPT/Codex subscription accounts in Paseo. Choose an 
 
 ## Requirements
 
-- **Paseo 0.8.x, 0.9.x, or 0.10.x**, including beta releases, on a **macOS or Linux** daemon and on the connected client.
+- **Paseo 0.8.x, 0.9.x, 0.10.x, or 0.11.x**, including beta releases, on a **macOS or Linux** daemon and on the connected client.
 - **Node.js 22.12.0 or newer**, with npm.
 - Official **Claude Code**, **Codex**, and **Paseo** CLIs available to the daemon. Both provider CLIs must be installed, even if you initially use only one.
 - Claude or ChatGPT subscription authentication. API keys and custom authentication/provider overrides are unsupported.
@@ -21,13 +21,16 @@ The interface is in English. Reset dates use the viewing device's local time zon
 
 ## Quick start
 
-Install from Git on a compatible daemon:
+Install from npm on a daemon running Paseo 0.9 or newer:
 
 ```sh
-paseo plugin install dutchakdev/paseo-plugin-account-switcher --host 127.0.0.1:6767
+paseo plugin install npm:paseo-plugin-account-switcher --host 127.0.0.1:6767
 ```
 
-Paseo downloads the source and runs the manifest's dependency and build steps.
+The npm package ships the generated launcher, so no build runs on the daemon.
+Paseo 0.8 has no npm sources; install from Git there with
+`paseo plugin install dutchakdev/paseo-plugin-account-switcher`, which downloads
+the source and runs the manifest's dependency and build steps.
 To review or develop the source first, use a local checkout:
 
 Download or clone this repository onto the **daemon's machine**, then run these commands from its directory:

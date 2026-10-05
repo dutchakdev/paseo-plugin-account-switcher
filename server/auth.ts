@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoApi } from "./paseo-api";
 import type { Provider } from "../shared/contracts";
 import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";

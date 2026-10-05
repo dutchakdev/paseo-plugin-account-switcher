@@ -1,7 +1,6 @@
 {
   "name": "paseo-plugin-account-switcher",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
   "author": "dutchakdev",
@@ -25,7 +24,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config tests/vitest.config.ts",
     "build": "node scripts/build.mjs",
-    "check": "npm run build && npm run typecheck && npm test"
+    "check": "npm run build && npm run typecheck && npm test",
+    "prepack": "npm run build && node scripts/pack-manifest.mjs strip",
+    "postpack": "node scripts/pack-manifest.mjs restore"
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5"
@@ -51,5 +52,15 @@
   "homepage": "https://github.com/dutchakdev/paseo-plugin-account-switcher#readme",
   "bugs": {
     "url": "https://github.com/dutchakdev/paseo-plugin-account-switcher/issues"
-  }
+  },
+  "files": [
+    "paseo-plugin.json",
+    "index.client.tsx",
+    "index.server.ts",
+    "client/",
+    "server/",
+    "shared/",
+    "licenses/",
+    "THIRD_PARTY_NOTICES.md"
+  ]
 }

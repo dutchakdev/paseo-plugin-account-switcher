@@ -2,7 +2,7 @@ import { access, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoApi } from "./paseo-api";
 import type { Provider } from "../shared/contracts";
 import type { AccountStore, Registry } from "./store";
 import { atomicWrite } from "./files";

@@ -1,6 +1,6 @@
 # Contributing
 
-Account Switcher is a TypeScript plugin for Paseo 0.8.x, 0.9.x, and 0.10.x, including beta releases, with a React Native client and a Node.js daemon component. Changes should preserve explicit account selection, profile isolation, and honest limits data.
+Account Switcher is a TypeScript plugin for Paseo 0.8.x, 0.9.x, 0.10.x, and 0.11.x, including beta releases, with a React Native client and a Node.js daemon component. Changes should preserve explicit account selection, profile isolation, and honest limits data.
 
 ## Development setup
 
@@ -28,6 +28,18 @@ npm test -- tests/switching.test.ts
 Before submitting, run the build, typecheck, and full test suite above.
 
 `npm run check` runs those three checks in that order.
+
+## Release to npm
+
+Paseo 0.9 and newer install the plugin from npm, and Paseo Cafe requires the npm version to equal `package.json.version` on the default branch.
+
+1. Bump `version` with `npm version <x.y.z> --no-git-tag-version` and update `CHANGELOG.md`.
+2. Run `npm run check`, then `npm pack --dry-run` and review the file list.
+3. Merge to `main`, then run `npm publish` from that commit.
+
+`npm pack` and `npm publish` run `prepack`, which builds the launcher and temporarily removes the Git-only `build` commands from `paseo-plugin.json`; `postpack` restores the file. Paseo runs manifest build commands for npm installs too, but without development dependencies or a lockfile, so the published manifest must not carry them. If packing is interrupted, run `node scripts/pack-manifest.mjs restore`.
+
+Server and client code must not import `@getpaseo/client` or `@getpaseo/protocol` directly, even for types: they are development dependencies and are absent from an npm installation. Name those types through `@getpaseo/plugin/server` or `@getpaseo/plugin/client`, as `server/paseo-api.ts` does.
 
 ## Find the relevant code
 
