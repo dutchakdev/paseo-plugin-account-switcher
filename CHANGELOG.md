@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Agent account switchers on Paseo 0.11.1: let the host assign subscription IDs,
+  keep one directory observation across refreshes and pagination, and release it
+  when the plugin stops.
+
 ## 0.2.0 - 2026-10-05
 
 ### Added

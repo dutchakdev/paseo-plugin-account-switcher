@@ -12,7 +12,7 @@ function deferred<T>() {
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 
 const agent = { id: "agent-1", workspaceId: "workspace-1", provider: "claude", status: "idle", archivedAt: null } as PaseoAgent;
-const page = { entries: [{ agent }], pageInfo: { hasMore: false, nextCursor: null } };
+const page = { entries: [{ agent }], pageInfo: { hasMore: false, nextCursor: null } } as Awaited<ReturnType<PluginClientContext["paseo"]["agents"]["list"]>>;
 const state: AccountState = {
   accounts: [
     { id: "system-claude", provider: "claude", source: "system", label: "System", authStatus: "ready", email: null, plan: null, createdAt: "2026-09-15" },
@@ -42,6 +42,71 @@ function harness(listResult: Promise<unknown> = Promise.resolve(page), accountSt
 afterEach(() => vi.useRealTimers());
 
 describe("composer registration lifecycle", () => {
+  it("lets the host assign the observation ID and releases it once on disposal", async () => {
+    vi.useFakeTimers();
+    const release = vi.fn(async () => {});
+    const host = harness();
+    vi.mocked(host.context.paseo.agents.list).mockImplementation(async (options) => {
+      if (options?.subscribe && "subscriptionId" in options.subscribe) {
+        throw new Error("Subscription IDs are assigned by the host");
+      }
+      return { ...page, requestId: "request", ...(options?.subscribe ? { subscription: { release } } : {}) };
+    });
+    const runtime = createClientRuntime(host.context, () => null);
+    await flush();
+    expect(runtime.getError()).toBeNull();
+    expect(host.add).toHaveBeenCalledOnce();
+    host.emit({ kind: "upsert", agent: { ...agent, id: "agent-2" } });
+    expect(host.add).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    runtime.refresh(); await flush();
+    const calls = vi.mocked(host.context.paseo.agents.list).mock.calls;
+    expect(calls.filter(([options]) => options?.subscribe)).toHaveLength(1);
+    expect(calls[0][0]?.subscribe).toEqual({});
+    expect(release).not.toHaveBeenCalled();
+    runtime.stop(); runtime.stop();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("paginates without creating more observations or replacing the live filter", async () => {
+    vi.useFakeTimers();
+    const host = harness();
+    vi.mocked(host.context.paseo.agents.list)
+      .mockResolvedValueOnce({ ...page, requestId: "first", pageInfo: { ...page.pageInfo, hasMore: true, nextCursor: "next" } })
+      .mockResolvedValueOnce({ entries: [{ ...page.entries[0], agent: { ...agent, id: "agent-2" } }], requestId: "second", pageInfo: page.pageInfo });
+    const runtime = createClientRuntime(host.context, () => null);
+    await flush();
+    expect(host.add).toHaveBeenCalledTimes(2);
+    expect(host.context.paseo.agents.list).toHaveBeenNthCalledWith(2, { scope: "active", page: { limit: 100, cursor: "next" } });
+    runtime.stop();
+  });
+
+  it("releases an observation returned after disposal", async () => {
+    vi.useFakeTimers();
+    const initial = deferred<unknown>();
+    const release = vi.fn(async () => {});
+    const host = harness(initial.promise);
+    const runtime = createClientRuntime(host.context, () => null);
+    runtime.stop();
+    initial.resolve({ ...page, subscription: { release } });
+    await flush();
+    expect(release).toHaveBeenCalledOnce();
+    expect(host.add).not.toHaveBeenCalled();
+  });
+
+  it("retries observation setup after a failed directory request", async () => {
+    vi.useFakeTimers();
+    const host = harness(Promise.reject(new Error("Host disconnected")));
+    const runtime = createClientRuntime(host.context, () => null);
+    await flush();
+    vi.mocked(host.context.paseo.agents.list).mockResolvedValue({ ...page, requestId: "retry" });
+    runtime.refresh(); await flush();
+    expect(runtime.getError()).toBeNull();
+    expect(host.add).toHaveBeenCalledOnce();
+    expect(vi.mocked(host.context.paseo.agents.list).mock.lastCall?.[0]?.subscribe).toEqual({});
+    runtime.stop();
+  });
+
   it("does not label an unconfirmed session as the system account", async () => {
     vi.useFakeTimers();
     const unknown = structuredClone(state);

@@ -4,6 +4,8 @@ import { currentAccount, currentAccountName, errorMessage, supportedProvider, us
 
 // npm installs omit devDependencies, so `@getpaseo/client` types are named through the host SDK entry.
 type PaseoAgent = Awaited<ReturnType<PluginClientContext["paseo"]["agents"]["list"]>>["entries"][number]["agent"];
+// New hosts return an owned observation; the pinned 0.8 SDK predates this handle.
+type DirectorySubscription = { release(): Promise<void> };
 
 export type PillTarget = Readonly<{ workspaceId: string; agentId: string }>;
 
@@ -26,7 +28,14 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
   let loadingData = false;
   let queuedRefresh = false;
   let modalTarget: PillTarget | null = null;
-  const subscriptionId = `account-switcher-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let observingDirectory = false;
+  let directorySubscription: DirectorySubscription | undefined;
+
+  function releaseDirectory(subscription: DirectorySubscription | undefined) {
+    if (subscription) void subscription.release().catch((error) => {
+      console.error(`Could not release agent account switchers: ${errorMessage(error)}`);
+    });
+  }
 
   function notify() { for (const listener of listeners) listener(); }
   function closeModal(expected: PillTarget) {
@@ -82,8 +91,13 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
       const listed = new Map<string, PaseoAgent>();
       let cursor: string | undefined;
       do {
-        const result = await client.paseo.agents.list({ scope: "active", page: { limit: 100, ...(cursor ? { cursor } : {}) }, subscribe: { subscriptionId } });
-        if (stopped) return;
+        // Establish one host-owned observation. Pagination and polling are plain
+        // reads, so they neither leak observations nor replace the legacy filter.
+        const observe = !observingDirectory && !cursor;
+        const result = await client.paseo.agents.list({ scope: "active", page: { limit: 100, ...(cursor ? { cursor } : {}) }, ...(observe ? { subscribe: {} } : {}) });
+        const subscription = (result as typeof result & { subscription?: DirectorySubscription }).subscription;
+        if (stopped) { releaseDirectory(subscription); return; }
+        if (observe) { observingDirectory = true; directorySubscription = subscription; }
         for (const entry of result.entries) listed.set(entry.agent.id, entry.agent);
         const next = result.pageInfo.hasMore ? result.pageInfo.nextCursor ?? undefined : undefined;
         if (next && next === cursor) throw new Error("Could not load the next page of agents.");
@@ -134,6 +148,7 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
     stop() {
       if (stopped) return;
       stopped = true; clearInterval(timer); unsubscribe();
+      releaseDirectory(directorySubscription); directorySubscription = undefined;
       if (modalTarget) closeModal(modalTarget);
       listeners.clear();
       for (const { registration } of pills.values()) registration.remove();

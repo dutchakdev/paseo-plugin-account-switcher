@@ -1,9 +1,23 @@
 # Verification
 
-Last checked: **2026-10-05**. These results describe observed checks, not a guarantee
+Last checked: **2026-10-08**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
 
 ## Automated checks
+
+On **2026-10-08**, the subscription-ID fix passed `npm run check` on Linux with
+the pinned 0.8.0 SDK: build, typecheck, and **215/215 tests** in 24 files. The
+full suite ran outside the filesystem sandbox because sandboxed fixture
+subprocesses returned empty output. New regressions cover host-assigned IDs,
+one observation across polling and pagination, retries, and disposal while
+setup is pending.
+
+Using the **0.11.1** client SDK against a running **0.11.1** daemon reproduced
+the old subscription-ID rejection. The fixed client runtime then discovered
+51 supported agents, reported no discovery error, retained one observation
+across a refresh, and released it on disposal. Composer registrations and
+account RPCs were stubbed in this check; it did not switch accounts or start
+provider sessions.
 
 On **2026-09-16**, clean source snapshots were installed with `npm ci --ignore-scripts --legacy-peer-deps`,
 then checked with `npm run check`.
