@@ -46,8 +46,24 @@ async function writeReceipt(store:AccountStore,agentId:string,overrides:Record<s
  await atomicWrite(join(store.root,"receipts",encodeURIComponent(agentId)+".json"),JSON.stringify({accountId:binding.launchAccountId,launchToken:binding.launchToken,pid:1,at:new Date().toISOString(),...overrides}));
 }
 function makeService(store:AccountStore,overrides:Partial<Omit<SwitchDependencies,"store">>={}) {
- return new SwitchService({store,inspect:async()=>({provider:"codex",busy:false,archived:false}),checkAccount:async()=>({authStatus:"ready"}),reload:id=>writeReceipt(store,id),...overrides});
+ return new SwitchService({store,inspect:async()=>({provider:"codex",busy:false,archived:false}),checkAccount:async()=>({authStatus:"ready"}),reload:id=>writeReceipt(store,id),receiptTimeoutMs:300,...overrides});
 }
+
+it("waits for a receipt from a provider CLI that starts after reload returns",async()=>{
+ const {store,target}=await fixture();let started:Promise<void>|undefined;
+ const service=makeService(store,{reload:async id=>{started=new Promise(done=>setTimeout(done,150)).then(()=>writeReceipt(store,id));}});
+ await service.prepare("lazy-agent",target.id);
+ expect(await service.apply("lazy-agent")).toMatchObject({currentAccountId:target.id,pendingAccountId:null,status:"ready"});
+ await started;
+});
+
+it("fails when no provider CLI confirms the launch",async()=>{
+ const {store,target}=await fixture();
+ const service=makeService(store,{reload:async()=>{}});
+ await service.prepare("silent-agent",target.id);
+ await expect(service.apply("silent-agent")).rejects.toThrow("did not confirm");
+ expect((await store.snapshot()).bindings[0]).toMatchObject({currentAccountId:null,pendingAccountId:target.id,status:"error"});
+});
 
 it("confirms the previous account with a fresh receipt after a failed reload",async()=>{
  const {store,target}=await fixture();let attempts=0;

@@ -7,7 +7,7 @@ import type { PaseoApi } from "@getpaseo/client";
 
 const mocks = vi.hoisted(() => ({
   launchLogin: vi.fn(), probeAccount: vi.fn(), removeAccountCredentials: vi.fn(),
-  prepareRuntime: vi.fn(), reconcileIntegration: vi.fn(),
+  prepareRuntime: vi.fn(), reconcileIntegration: vi.fn(), execFile: vi.fn(),
   failRemovePath: undefined as string | undefined,
   usage: {
     start: vi.fn(), close: vi.fn(), invalidate: vi.fn(), refresh: vi.fn(), list: vi.fn(),
@@ -24,6 +24,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:child_process")>(), execFile: mocks.execFile,
+}));
 
 vi.mock("../server/auth", () => ({
   launchLogin: mocks.launchLogin, probeAccount: mocks.probeAccount, removeAccountCredentials: mocks.removeAccountCredentials,
@@ -53,6 +57,7 @@ beforeEach(() => {
   mocks.removeAccountCredentials.mockReset().mockResolvedValue(undefined);
   mocks.prepareRuntime.mockReset().mockResolvedValue(undefined);
   mocks.reconcileIntegration.mockReset().mockResolvedValue(undefined);
+  mocks.execFile.mockReset().mockImplementation((...args: unknown[]) => { (args.at(-1) as (error: null, stdout: string) => void)(null, ""); });
   mocks.usage.close.mockResolvedValue(undefined);
   mocks.usage.refresh.mockResolvedValue([]);
   mocks.usage.list.mockResolvedValue([]);
@@ -405,5 +410,26 @@ describe("live integration reconciliation", () => {
     await expect(controller.switcher(paseo).apply("late-drift-agent")).rejects.toThrow(/integration/i);
     expect(mocks.reconcileIntegration).toHaveBeenCalledTimes(2);
     expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: null, launchToken: null, status: "error" });
+  });
+});
+
+describe("native reload", () => {
+  it("starts a lazily launched provider CLI so the switch can confirm its receipt", async () => {
+    const home = await newRoot(), controller = await start(join(home, "account-switcher"));
+    await writeFile(join(home, "config.json"), JSON.stringify({ daemon: { listen: "0.0.0.0:6767" } }));
+    const account = await controller.store.add("codex", "Managed"); await mkdir(account.home, { recursive: true });
+    await controller.store.change(r => { r.integration.enabled = true; });
+    await controller.store.prepare("lazy-agent", "codex", account.id);
+    // Paseo 0.11 returns from reload before the CLI exists; only first use spawns the launcher.
+    const commands = vi.fn(async () => {
+      const binding = (await controller.store.read()).bindings[0];
+      await mkdir(join(controller.store.root, "receipts"), { recursive: true });
+      await writeFile(join(controller.store.root, "receipts", "lazy-agent.json"), JSON.stringify({ accountId: binding.launchAccountId, launchToken: binding.launchToken }));
+      return { commands: [] };
+    });
+    const lazy = { agents: { ref: () => ({ refresh: async () => ({ agent: { provider: "codex", status: "idle", activeTurn: null, pendingPermissions: [], archivedAt: null } }), commands }) } } as unknown as PaseoApi;
+    await expect(controller.switcher(lazy).apply("lazy-agent")).resolves.toMatchObject({ currentAccountId: account.id, status: "ready" });
+    expect(mocks.execFile).toHaveBeenCalledWith("paseo", ["agent", "reload", "lazy-agent", "--json", "--host", "127.0.0.1:6767"], expect.anything(), expect.any(Function));
+    expect(commands).toHaveBeenCalledTimes(1);
   });
 });

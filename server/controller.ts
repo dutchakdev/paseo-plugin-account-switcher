@@ -312,6 +312,10 @@ export class AccountController {
    const host=listen.replace(/^0\.0\.0\.0:/,"127.0.0.1:");
    try{await execFileAsync("paseo",["agent","reload",id,"--json","--host",host],{timeout:120_000,maxBuffer:1024*1024,env:process.env});}
    catch{throw new Error("The native agent reload failed. Check the agent status and try again.");}
+   // Paseo 0.11 reloads into an idle session and spawns the CLI on first use; listing
+   // commands starts it so the launcher can confirm the account. Older hosts already started it.
+   const agent=paseo.agents.ref(id) as {commands?:()=>Promise<unknown>};
+   if(agent.commands)await agent.commands().catch(()=>{/* The receipt check reports a failed start. */});
   }});
   this.switches.set(paseo,service);return service;
  }

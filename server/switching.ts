@@ -10,10 +10,22 @@ export interface SwitchDependencies {
  checkAccount:(accountId:string)=>Promise<{authStatus:string}>;
  reload:(agentId:string)=>Promise<void>;
  applying?:Set<string>;
+ receiptTimeoutMs?:number;
+}
+// Paseo 0.11 starts provider CLIs lazily, so the launch receipt can land after reload returns.
+async function confirmLaunch(root:string,agentId:string,accountId:string,token:string,timeoutMs:number):Promise<boolean>{
+ const path=join(root,"receipts",encodeURIComponent(agentId)+".json"),deadline=Date.now()+timeoutMs;
+ for(;;){
+   try{const receipt=JSON.parse(await readFile(path,"utf8"));if(receipt.accountId===accountId&&receipt.launchToken===token)return true;}
+   catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT"&&!(error instanceof SyntaxError))throw error;}
+   if(Date.now()>=deadline)return false;
+   await new Promise(done=>setTimeout(done,100));
+ }
 }
 export class SwitchService {
  private applying:Set<string>;
- constructor(private readonly deps:SwitchDependencies){this.applying=deps.applying??new Set();}
+ private receiptTimeoutMs:number;
+ constructor(private readonly deps:SwitchDependencies){this.applying=deps.applying??new Set();this.receiptTimeoutMs=deps.receiptTimeoutMs??15_000;}
  async prepare(agentId:string,accountId:string|null):Promise<Binding>{
    if(this.applying.has(agentId))throw new Error("An account switch is already in progress.");
    const agent=await this.deps.inspect(agentId);
@@ -39,8 +51,7 @@ export class SwitchService {
      await assertIdle();
      previous=await store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(!r.integration.enabled||!b||b.pendingAccountId!==target.id||b.status==="switching")throw new Error("The account selection changed; try again.");if(accountFrom(r,target.id).loginToken)throw new Error("Account sign-in is still in progress.");const old=structuredClone(b);b.status="switching";b.error=null;b.launchAccountId=target.id;b.launchToken=token;return old;});
      await this.deps.reload(agentId);
-     const receipt=JSON.parse(await readFile(join(store.root,"receipts",encodeURIComponent(agentId)+".json"),"utf8"));
-     if(receipt.accountId!==target.id||receipt.launchToken!==token)throw new Error("The new account did not confirm its launch.");
+     if(!await confirmLaunch(store.root,agentId,target.id,token,this.receiptTimeoutMs))throw new Error("The new account did not confirm its launch.");
      return await store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(!r.integration.enabled||!b||b.launchToken!==token)throw new Error("The account switch state changed.");b.currentAccountId=target.id;b.pendingAccountId=null;b.status="ready";b.error=null;b.launchToken=null;b.registrationObserved=true;return BindingSchema.parse(b);});
    } catch(error) {
      if(previous){
@@ -52,8 +63,7 @@ export class SwitchService {
          try{
            const agent=await this.deps.inspect(agentId);if(agent.busy||agent.archived)throw new Error("Agent is busy");
            await this.deps.reload(agentId);
-           const receipt=JSON.parse(await readFile(join(this.deps.store.root,"receipts",encodeURIComponent(agentId)+".json"),"utf8"));
-           restored=receipt.accountId===rollback.currentAccountId&&receipt.launchToken===rollbackToken;
+           restored=await confirmLaunch(this.deps.store.root,agentId,rollback.currentAccountId,rollbackToken,this.receiptTimeoutMs);
          }catch{/* Keep the account unknown unless rollback launch is confirmed. */}
        }
        await this.deps.store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(b?.launchToken===rollbackToken){b.currentAccountId=restored?rollback.currentAccountId:null;b.pendingAccountId=rollback.pendingAccountId;b.status="error";b.launchToken=null;b.error=restored?"The account switch failed. The previous account was restored.":"Account not confirmed for the running session. Select an account and apply it again.";}});

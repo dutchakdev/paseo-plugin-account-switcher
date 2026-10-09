@@ -19,6 +19,14 @@ across a refresh, and released it on disposal. Composer registrations and
 account RPCs were stubbed in this check; it did not switch accounts or start
 provider sessions.
 
+Later on **2026-10-08**, the launch-receipt fix passed `npm run check`: build,
+typecheck, and **218/218 tests** in 24 files. On a running **0.11.1** daemon,
+`paseo agent reload` logged only a refresh from persistence and started no
+provider CLI, so applying an account failed with `ENOENT` on the receipt. New
+regressions cover a receipt that arrives after reload returns, a launch that
+never confirms, and the controller starting the CLI by listing agent commands;
+the controller test fails without the fix.
+
 On **2026-09-16**, clean source snapshots were installed with `npm ci --ignore-scripts --legacy-peer-deps`,
 then checked with `npm run check`.
 

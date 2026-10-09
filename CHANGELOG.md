@@ -7,6 +7,9 @@
 - Agent account switchers on Paseo 0.11.1: let the host assign subscription IDs,
   keep one directory observation across refreshes and pagination, and release it
   when the plugin stops.
+- Account switches on Paseo 0.11.1: start the reloaded provider CLI, which the host
+  now launches on first use, and wait briefly for its launch receipt instead of
+  failing with `ENOENT` on `receipts/<agent>.json`.
 
 ## 0.2.0 - 2026-10-05
 
