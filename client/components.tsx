@@ -123,7 +123,7 @@ export function QuotaWindowRow({ theme, quota, now }: ThemeProps & { quota: Usag
     </View>
     <Meter theme={theme} used={quota.usedPercent} />
     <Text style={{ ...muted(theme), ...tabular, fontSize: 11, lineHeight: 14, color: expired ? theme.colors.statusWarning : theme.colors.foregroundMuted }}>
-      {expired ? "reset time passed · last known data" : shortCountdown(quota.resetsAt, now)}
+      {quota.detail ? `${quota.detail} · ` : ""}{expired ? "reset time passed · last known data" : shortCountdown(quota.resetsAt, now)}
     </Text>
   </View>;
 }
@@ -161,6 +161,7 @@ export function QuotaSummary({ theme, snapshot, now, compact, onRefresh, refresh
       <View style={{ gap: 4, paddingLeft: 18 }}>
         {snapshot.windows.map((quota) => <DetailLine key={quota.id} theme={theme}>
           {quota.label}: {quota.usedPercent === null ? "no data" : `${percent(quota.usedPercent)} used`}
+          {quota.detail ? ` · ${quota.detail}` : ""}
           {quota.resetsAt ? ` · resets ${localDate(quota.resetsAt)}` : " · reset time unknown"}
           {windowLength(quota.windowDurationMins) ? ` · period ${windowLength(quota.windowDurationMins)}` : ""}
         </DetailLine>)}

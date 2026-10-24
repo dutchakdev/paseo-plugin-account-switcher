@@ -40,6 +40,8 @@ export type AccountState = z.infer<typeof StateSchema>;
 export const UsageWindowSchema = z.object({
   id: z.string(), label: z.string(), usedPercent: z.number().nullable(),
   windowDurationMins: z.number().nullable(), resetsAt: z.string().nullable(),
+  // Provider-reported amounts behind the percentage, such as "3,765 of 5,000 credits left".
+  detail: z.string().nullable().optional(),
 });
 export type UsageWindow = z.infer<typeof UsageWindowSchema>;
 export const UsageSnapshotSchema = z.object({

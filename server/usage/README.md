@@ -66,6 +66,9 @@ OAuth credentials; this module performs no custom refresh or forced refresh. The
 quota response account ID is checked against a known profile identity. If an older
 response omits that ID and credentials rotated during the call, it cannot replace
 the previous snapshot. The process is terminated on success, failure or cancellation.
+Usage-based workspace plans (for example `enterprise_cbp_usage_based`) report no
+`primary` or `secondary` window; their bucket's `individualLimit` monthly credit
+allowance becomes a window with `usedPercent = 100 - remainingPercent`.
 
 **Claude:** on macOS the exact Keychain service/account is preferred. A missing
 or inaccessible item falls back only to `.credentials.json` in the supplied home,
@@ -81,6 +84,10 @@ uses its effective credential home, including an empty override for the default.
 There is no global profile search. Only the OAuth usage GET endpoint is requested; no
 token refresh or inference request is sent. Before HTTP, the actual selected token
 must still match the credential hash used to verify a known account identity.
+Enterprise seats return every plan window as `null` and report an enabled
+`extra_usage` monthly spend allowance in minor currency units. It becomes a
+"Monthly spend" window from `utilization`; when no plan window has a value, the
+empty plan windows are dropped.
 
 Tests use synthetic credentials and a synthetic stdio CLI. They establish local
 protocol, parsing, isolation, scheduling and cache behavior. They do not establish

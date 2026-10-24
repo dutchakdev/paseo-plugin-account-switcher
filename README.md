@@ -95,7 +95,7 @@ Different agents can use different accounts in parallel. Avoid sending from anot
 
 ## Read limits
 
-Each account shows all reported limit windows, including zero usage. Measured windows show used and remaining percentages and a reset countdown. Expand details for exact local reset times, durations, fetch/check timestamps, and windows without data.
+Each account shows all reported limit windows, including zero usage. Measured windows show used and remaining percentages and a reset countdown. Codex usage-based workspace plans show their monthly credit allowance as a limit, with the credits left; Claude enterprise seats show their monthly spend allowance the same way. Expand details for exact local reset times, durations, fetch/check timestamps, and windows without data.
 
 - Checks run every **5 minutes** in the background and every **minute** while Accounts or the switcher is open.
 - **Refresh** requests new data for one account; the header refresh action covers all accounts. Provider retry delays still apply.

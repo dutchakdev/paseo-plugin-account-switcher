@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Codex accounts on usage-based workspace plans, such as `enterprise_cbp_usage_based`, show their monthly credit allowance as a limit, for example "75% left" and "3,765 of 5,000 credits left".
+- Claude enterprise seats show their monthly spend allowance as a limit, for example "Monthly spend" with "$487.50 of $500.00 left".
+
 ## 0.3.4 - 2026-10-22
 
 ### Changed

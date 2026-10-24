@@ -11,6 +11,11 @@ function date(value: unknown, seconds = false): string | null {
   const time = seconds ? (value as number) * 1000 : Date.parse(value as string);
   return Number.isFinite(time) && Math.abs(time) <= 8.64e15 ? new Date(time).toISOString() : null;
 }
+function amount(value: unknown): number | null {
+  const parsed = typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+const credits = (value: number) => Math.round(value).toLocaleString("en-US");
 function durationLabel(minutes: number | null, fallback: string): string {
   if (minutes === null) return fallback;
   if (minutes % 1440 === 0) return `${minutes / 1440} days`;
@@ -33,6 +38,15 @@ export function parseCodexUsage(payload: unknown): CollectedUsage {
       if (!window) continue;
       const duration = numeric(window.windowDurationMins);
       windows.push({ id: `${id}:${key}`, label: `${string(bucket.limitName) ?? id} · ${durationLabel(duration, key)}`, usedPercent: numeric(window.usedPercent), windowDurationMins: duration, resetsAt: date(window.resetsAt, true) });
+    }
+    // Usage-based workspaces (e.g. enterprise_cbp_usage_based) report a monthly credit allowance instead of windows.
+    const spend = object(bucket.individualLimit);
+    const remaining = numeric(spend?.remainingPercent);
+    if (spend && remaining !== null) {
+      const limit = amount(spend.limit);
+      const used = amount(spend.used);
+      windows.push({ id: `${id}:individual`, label: `${string(bucket.limitName) ?? id} · monthly credits`, usedPercent: 100 - Math.min(100, remaining), windowDurationMins: null, resetsAt: date(spend.resetsAt, true),
+        detail: limit !== null && used !== null ? `${credits(Math.max(0, limit - used))} of ${credits(limit)} credits left` : null });
     }
   }
   return { identityKey: string(root.accountId), plan, windows };
@@ -58,6 +72,19 @@ export function parseClaudeUsage(payload: unknown): CollectedUsage {
     const labels = [string(model?.display_name) ?? string(scope?.model), string(surface?.display_name) ?? string(scope?.surface)].filter((s): s is string => !!s);
     if (!labels.length) continue;
     windows.push({ id: `weekly_scoped:${index}`, label: `Weekly · ${labels.join(" · ")}`, usedPercent: numeric(row.percent), windowDurationMins: 10080, resetsAt: date(row.resets_at) });
+  }
+  // Enterprise seats report a monthly spend allowance; amounts are in minor units of `currency`.
+  const extra = object(root.extra_usage);
+  const limit = numeric(extra?.monthly_limit);
+  const used = numeric(extra?.used_credits);
+  if (extra?.is_enabled === true && limit) {
+    const scale = 10 ** (numeric(extra.decimal_places) ?? 2);
+    const currency = string(extra.currency) ?? "USD";
+    const money = (value: number) => { try { return (value / scale).toLocaleString("en-US", { style: "currency", currency }); } catch { return `${(value / scale).toFixed(2)} ${currency}`; } };
+    const spend: UsageWindow = { id: "extra_usage", label: "Monthly spend", usedPercent: numeric(extra.utilization) ?? (used === null ? null : used / limit * 100), windowDurationMins: null, resetsAt: null,
+      detail: used === null ? null : `${money(Math.max(0, limit - used))} of ${money(limit)} left` };
+    // Without any plan limits the empty plan rows are noise; the spend allowance is the only quota.
+    return { identityKey: null, plan: null, windows: windows.some((quota) => quota.usedPercent !== null) ? [...windows, spend] : [spend] };
   }
   return { identityKey: null, plan: null, windows };
 }

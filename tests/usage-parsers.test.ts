@@ -15,6 +15,18 @@ describe("provider quota payloads", () => {
     ]);
     expect(parseCodexUsage({ rateLimits: { primary: { usedPercent: 3, windowDurationMins: 300 } } }).windows[0]?.usedPercent).toBe(3);
   });
+  it("reports a usage-based workspace's monthly credit allowance as a window", () => {
+    const bucket = { limitId: "codex", limitName: null, primary: null, secondary: null,
+      credits: { hasCredits: true, unlimited: false, balance: null },
+      individualLimit: { limit: "5000", used: "1234.56", remainingPercent: 75, resetsAt: 1798761600 },
+      spendControlReached: false, planType: "enterprise_cbp_usage_based" };
+    const result = parseCodexUsage({ accountId: "a", rateLimits: bucket, rateLimitsByLimitId: { codex: bucket } });
+    expect(result.plan).toBe("enterprise_cbp_usage_based");
+    expect(result.windows).toEqual([
+      { id: "codex:individual", label: "codex · monthly credits", usedPercent: 25, windowDurationMins: null, resetsAt: "2027-01-01T00:00:00.000Z", detail: "3,765 of 5,000 credits left" },
+    ]);
+    expect(parseCodexUsage({ rateLimits: { individualLimit: { limit: "bad", remainingPercent: 120 } } }).windows[0]).toMatchObject({ usedPercent: 0, detail: null, resetsAt: null });
+  });
   it("preserves Claude generic, legacy and scoped weekly quotas independently", () => {
     const result = parseClaudeUsage({ five_hour: { utilization: 0, resets_at: null }, seven_day: null,
       seven_day_sonnet: { utilization: 19, resets_at: "2026-09-20T00:00:00Z" },
@@ -24,5 +36,15 @@ describe("provider quota payloads", () => {
     expect(result.windows[0]).toMatchObject({ usedPercent: 0, windowDurationMins: 300, resetsAt: null });
     expect(result.windows[1]).toMatchObject({ usedPercent: null, windowDurationMins: 10080 });
     expect(result.windows[3]).toMatchObject({ label: "Weekly · Opus · Claude Code", usedPercent: null });
+  });
+  it("reports an enterprise seat's monthly spend allowance instead of empty plan limits", () => {
+    const extra_usage = { is_enabled: true, monthly_limit: 50000, used_credits: 1250.0, utilization: 2.5, currency: "USD", decimal_places: 2 };
+    expect(parseClaudeUsage({ five_hour: null, seven_day: null, seven_day_opus: null, extra_usage, limits: [] }).windows).toEqual([
+      { id: "extra_usage", label: "Monthly spend", usedPercent: 2.5, windowDurationMins: null, resetsAt: null, detail: "$487.50 of $500.00 left" },
+    ]);
+    const withLimits = parseClaudeUsage({ five_hour: { utilization: 10, resets_at: null }, seven_day: null, extra_usage: { ...extra_usage, utilization: undefined } });
+    expect(withLimits.windows.map((quota) => quota.id)).toEqual(["five_hour", "seven_day", "extra_usage"]);
+    expect(withLimits.windows[2]?.usedPercent).toBe(2.5);
+    expect(parseClaudeUsage({ five_hour: null, extra_usage: { ...extra_usage, is_enabled: false } }).windows).toHaveLength(1);
   });
 });
