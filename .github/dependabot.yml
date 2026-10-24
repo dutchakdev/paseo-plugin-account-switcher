@@ -5,6 +5,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      production-major:
+        dependency-type: production
+        update-types: ['major']
+      all-minor-patch:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
     ignore:
       # Pinned on purpose: the SDK at the oldest supported Paseo, so typechecking
       # proves the plugin uses only that API; react and react-native at what the
@@ -21,3 +28,6 @@ updates:
     directories: ['/', '/.github/actions/*']
     schedule:
       interval: monthly
+    groups:
+      all-actions:
+        patterns: ['*']
