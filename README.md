@@ -1,3 +1,5 @@
+<img src="docs/assets/icon.png" width="88" align="right" alt="">
+
 # Account Switcher for Paseo
 
 [![CI](https://github.com/dutchakdev/paseo-plugin-account-switcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dutchakdev/paseo-plugin-account-switcher/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/paseo-plugin-account-switcher)](https://www.npmjs.com/package/paseo-plugin-account-switcher)
@@ -91,6 +93,8 @@ You can select an account during a response, but it is **never applied automatic
 
 Apply reloads the agent through Paseo while preserving its native session ID. The plugin confirms the new account only after startup confirmation and successful reload. If a switch fails, it attempts to restore the previous account. **Account not confirmed** means the running account could not be established; select an account and apply again.
 
+Plans differ in the models they offer. A free ChatGPT plan, for example, refuses a model that only paid plans have, and the agent's next message fails with `model_not_found`. For Codex, the plugin reads each account's models with its limits; when the selected account's plan does not offer the agent's model, the dialog says so before **Apply** and lists the models it does offer. Claude does not report its models this way, so the dialog shows no such warning for Claude.
+
 Different agents can use different accounts in parallel. Avoid sending from another client during Apply: Paseo's native reload has no atomic lock against a concurrent message, which could be interrupted.
 
 ## Read limits
@@ -103,7 +107,7 @@ Each account shows all reported limit windows, including zero usage. Measured wi
 - Failed requests can retain the last confirmed values as **stale**. Required sign-in, errors, and freshness remain visible.
 - A passed reset time triggers a new check; it does not imply that usage is already zero.
 
-Monitoring sends no model messages. The official CLIs own authentication and token refresh; a native Codex limits request may refresh its token. See [monitor details](server/usage/README.md) for scheduling, identity verification, and cache behavior.
+Monitoring sends no model messages. The official CLIs own authentication and token refresh; a native Codex limits request may refresh its token. A Claude access token expires when no Claude session uses the account for several hours. Before a limits check finds it expired, the plugin runs `claude -p /usage --no-session-persistence` under that account, at most every 10 minutes. This local command lets the CLI renew the token, with no model message and no saved session. **Sign in again** appears only when the CLI cannot renew it. See [monitor details](server/usage/README.md) for scheduling, identity verification, and cache behavior.
 
 ## Update or remove
 

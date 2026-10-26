@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { UsageError, type CollectedUsage, type QuotaAccount } from "./index";
-import { object, parseCodexUsage, string } from "./parsers";
+import { object, parseCodexModels, parseCodexUsage, string } from "./parsers";
 
 /** A short-lived native app-server session. No thread, prompt, login or forced refresh. */
 export async function collectCodexUsage(account: QuotaAccount, signal?: AbortSignal): Promise<CollectedUsage> {
@@ -48,6 +48,18 @@ export async function collectCodexUsage(account: QuotaAccount, signal?: AbortSig
     const id = ++sequence;
     return new Promise((resolve, reject) => { pending.set(id,{resolve,reject}); child.stdin.write(`${JSON.stringify({id,method,params})}\n`); });
   }
+  // Plans differ in the models they offer; switching an agent to a plan without its model fails the next turn.
+  async function listModels(): Promise<string[] | null> {
+    const models: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 10; page++) {
+      const parsed = parseCodexModels(await request("model/list", cursor ? {cursor} : {}));
+      if (!parsed) return null;
+      models.push(...parsed.models);
+      if (!(cursor = parsed.nextCursor)) return models;
+    }
+    return null;
+  }
   try {
     if (signal?.aborted) throw new UsageError("unavailable", "cancelled");
     await request("initialize", {clientInfo:{name:"paseo_account_switcher",version:"0.1.0"}});
@@ -59,7 +71,7 @@ export async function collectCodexUsage(account: QuotaAccount, signal?: AbortSig
     const usage = parseCodexUsage(await request("account/rateLimits/read", {}));
     if (account.identityKey && usage.identityKey && account.identityKey !== usage.identityKey) throw new UsageError("needs_auth", "identity_changed");
     if (!usage.windows.length) throw new UsageError("unavailable", "invalid_payload");
-    return {...usage, plan:usage.plan ?? string(signedIn.planType)};
+    return {...usage, plan:usage.plan ?? string(signedIn.planType), models:await listModels().catch(() => null)};
   } catch (error) {
     if (error instanceof UsageError) throw error;
     throw new UsageError("unavailable", "cli_failed");

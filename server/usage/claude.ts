@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { UsageError, type CollectedUsage, type QuotaAccount } from "./index";
 import { object, parseClaudeUsage, string } from "./parsers";
 import { credentialHash } from "./credential-hash";
@@ -14,7 +14,10 @@ export type ClaudeDependencies = {
   readKeychain?: (target: KeychainTarget, signal?: AbortSignal) => Promise<string | null>;
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
   now?: () => number;
+  run?: (command: string[], env: NodeJS.ProcessEnv) => Promise<void>;
 };
+// The usage request must not race a token that expires while it is in flight.
+const RENEWAL_MARGIN = 60_000;
 export function claudeKeychainTarget(account: QuotaAccount): KeychainTarget {
   const custom = account.env.CLAUDE_SECURESTORAGE_CONFIG_DIR ?? account.env.CLAUDE_CONFIG_DIR;
   // Verified against Claude Code 2.1.263's embedded secure-storage implementation.
@@ -50,6 +53,27 @@ function keychain(target: KeychainTarget, signal?: AbortSignal): Promise<string 
       else if ((error as {code?: number | string}).code === 44) resolve(null);
       else reject(new UsageError("unavailable", "keychain_unavailable"));
     });
+  });
+}
+/** Lets the official CLI renew an expired access token; the plugin never refreshes tokens itself.
+ * Returns whether a renewal was attempted. A failed renewal leaves the usage request to report sign-in. */
+export async function renewExpiredClaudeToken(account: QuotaAccount, dependencies: ClaudeDependencies = {}): Promise<boolean> {
+  let oauth: Record<string, unknown> | null;
+  try {oauth = object(object(JSON.parse((await readClaudeCredentials(account, dependencies)).raw))?.claudeAiOauth);}
+  catch {return false;}
+  const expiresAt = oauth?.expiresAt;
+  if (typeof expiresAt !== "number" || !string(oauth?.refreshToken)) return false;
+  if (expiresAt - RENEWAL_MARGIN > (dependencies.now ?? Date.now)()) return false;
+  // `/usage` is a local command: it renews the token without a model turn, and nothing is saved to history.
+  await (dependencies.run ?? runCli)([...account.command, "-p", "/usage", "--no-session-persistence"], account.env).catch(() => {});
+  return true;
+}
+function runCli(command: string[], env: NodeJS.ProcessEnv): Promise<void> {
+  return new Promise((resolve, reject) => {
+    // Closed stdin: print mode otherwise waits for piped input.
+    const child = spawn(command[0], command.slice(1), { env, cwd: tmpdir(), stdio: "ignore", timeout: 60_000, windowsHide: true });
+    child.once("error", reject);
+    child.once("exit", code => code === 0 ? resolve() : reject(new Error(`exit ${code}`)));
   });
 }
 export function retryAfter(value: string | null, now: number): number | undefined {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseClaudeUsage, parseCodexUsage } from "../server/usage/parsers";
+import { readFileSync } from "node:fs";
+import { parseClaudeUsage, parseCodexModels, parseCodexUsage } from "../server/usage/parsers";
 
 describe("provider quota payloads", () => {
   it("retains every Codex bucket, zero percent and actual durations", () => {
@@ -46,5 +47,18 @@ describe("provider quota payloads", () => {
     expect(withLimits.windows.map((quota) => quota.id)).toEqual(["five_hour", "seven_day", "extra_usage"]);
     expect(withLimits.windows[2]?.usedPercent).toBe(2.5);
     expect(parseClaudeUsage({ five_hour: null, extra_usage: { ...extra_usage, is_enabled: false } }).windows).toHaveLength(1);
+  });
+});
+
+describe("Codex model list", () => {
+  // Captured from `model/list` on codex-cli 0.164.0 for a free ChatGPT account.
+  const free = JSON.parse(readFileSync(new URL("./fixtures/codex-model-list-free.json", import.meta.url), "utf8"));
+  it("reads the models an account's plan offers", () => {
+    expect(parseCodexModels(free)).toEqual({ models: ["gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna"], nextCursor: null });
+  });
+  it("reports an unreadable list as unknown rather than empty", () => {
+    expect(parseCodexModels({})).toBeNull();
+    expect(parseCodexModels({ data: [{ displayName: "No id" }] })).toBeNull();
+    expect(parseCodexModels({ data: [], nextCursor: "next" })).toEqual({ models: [], nextCursor: "next" });
   });
 });

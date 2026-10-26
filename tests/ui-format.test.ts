@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentAccount, currentAccountName, idleForSwitch, percent, quotaLevel, remainingPercent, resetCountdown, usageSummary } from "../client/format";
+import { currentAccount, currentAccountName, idleForSwitch, percent, quotaLevel, remainingPercent, resetCountdown, agentModel, switchRisk, usageSummary } from "../client/format";
 import type { AccountState, UsageSnapshot } from "../shared/contracts";
 
 describe("quota presentation", () => {
@@ -49,5 +49,26 @@ describe("manual switch readiness", () => {
     state.bindings.push({ agentId: "agent", provider: "codex", currentAccountId: null, pendingAccountId: "system-codex", status: "error", error: "Reload failed" });
     expect(currentAccount(state, "agent", "codex")).toBeUndefined();
     expect(currentAccountName(state, "agent", "codex")).toBe("Account not confirmed");
+  });
+});
+
+describe("switch warnings", () => {
+  // A free ChatGPT plan answers `model_not_found` for a model only paid plans offer.
+  const free = { label: "Second", models: ["gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna"] };
+  it("warns when the target account's plan does not offer the agent's model", () => {
+    expect(switchRisk(free, "gpt-6.1-sol")).toBe("Second's plan does not offer gpt-6.1-sol, so the next message would fail. After switching, choose one of its models: gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna.");
+    expect(switchRisk(free, "gpt-6-luna")).toBeNull();
+  });
+  it("stays silent when either side is unknown", () => {
+    expect(switchRisk({ label: "Claude", models: null }, "opus")).toBeNull();
+    expect(switchRisk({ label: "Claude" }, "opus")).toBeNull();
+    expect(switchRisk(free, null)).toBeNull();
+  });
+  it("prefers the running model, then the configured one, then the provider suffix", () => {
+    expect(agentModel({ provider: "codex/gpt-6-astra", model: "gpt-6-sol", runtimeInfo: { model: "gpt-6.1-sol" } })).toBe("gpt-6.1-sol");
+    expect(agentModel({ provider: "codex/gpt-6-astra", model: "gpt-6-sol", runtimeInfo: { model: null } })).toBe("gpt-6-sol");
+    expect(agentModel({ provider: "codex/gpt-6-astra", model: null })).toBe("gpt-6-astra");
+    expect(agentModel({ provider: "codex", model: null })).toBeNull();
+    expect(agentModel(null)).toBeNull();
   });
 });

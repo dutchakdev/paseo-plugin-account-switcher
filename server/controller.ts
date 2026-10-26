@@ -12,9 +12,12 @@ import { accountCommand, accountEnvironment, launchLogin, probeAccount, removeAc
 import { installIntegration, restoreIntegration, writeLaunchers, prepareRuntime, reconcileIntegration } from "./integration";
 import { SwitchService } from "./switching";
 import { createUsageService, readCredentialVersion, type AccountReadOptions, type QuotaAccount } from "./usage";
+import { renewExpiredClaudeToken } from "./usage/claude";
 import { LoginSessions, type LoginDependencies } from "./login";
 
 const execFileAsync=promisify(execFile);
+// A revoked sign-in fails every renewal; this bounds how often it starts the CLI.
+const RENEWAL_INTERVAL=600000;
 export class AccountController {
  readonly store:AccountStore;
  readonly ready:Promise<void>;
@@ -22,6 +25,7 @@ export class AccountController {
  private readonly checks=new Map<string,Promise<StoredAccount>>();
  private readonly credentialVersions=new Map<string,string>();
  private readonly credentialProofs=new Map<string,{version:string;identityKey:string;generation:number}>();
+ private readonly renewals=new Map<string,number>();
  private readonly switches=new Map<PaseoApi,SwitchService>();
  private readonly applying=new Set<string>();
  private runtimeReady:Promise<void>|undefined;
@@ -116,6 +120,8 @@ export class AccountController {
    if(verifyCredentials){
     this.credentialProofs.delete(id);
     const quota=this.toQuotaAccount(account,state);
+    // An idle account's token expires with no CLI running to renew it. Renew before the proof, so it covers the new token.
+    if(account.provider==="claude"&&Date.now()-(this.renewals.get(id)??-Infinity)>=RENEWAL_INTERVAL&&await renewExpiredClaudeToken(quota))this.renewals.set(id,Date.now());
     for(let attempt=0;;attempt++){
      const before=await readCredentialVersion(quota);
      identity=await probeAccount(account,state);
@@ -288,7 +294,7 @@ export class AccountController {
    for(const path of paths)await rm(path,{recursive:true,force:true});
   });
   await this.usage.invalidate(id);
-  this.credentialVersions.delete(account.id);this.credentialProofs.delete(account.id);
+  this.credentialVersions.delete(account.id);this.credentialProofs.delete(account.id);this.renewals.delete(account.id);
  }
  async integration(paseo:PaseoApi,enabled:boolean) {
   await this.ready;

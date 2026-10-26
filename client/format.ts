@@ -77,6 +77,20 @@ export function idleForSwitch(agent: {
   return Boolean(agent && agent.status === "idle" && !agent.activeTurn && agent.pendingPermissions.length === 0);
 }
 
+/** The model an agent runs, from its snapshot: running, then configured, then the `provider/model` suffix. */
+export function agentModel(agent: { provider: string; model?: string | null; runtimeInfo?: { model?: string | null } | null } | null | undefined): string | null {
+  if (!agent) return null;
+  return agent.runtimeInfo?.model || agent.model || agent.provider.split("/")[1] || null;
+}
+
+/** Why the agent's next message would fail on the target account, when the plugin can tell. */
+export function switchRisk(target: { label: string; models?: readonly string[] | null }, model: string | null): string | null {
+  // Plans differ in models: a free ChatGPT plan answers `model_not_found` for a paid-only model.
+  if (!model || !target.models || target.models.includes(model)) return null;
+  const choices = target.models.length ? ` After switching, choose one of its models: ${target.models.join(", ")}.` : "";
+  return `${target.label}'s plan does not offer ${model}, so the next message would fail.${choices}`;
+}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : typeof error === "string" ? error : "Could not complete the action. Try again.";
 }

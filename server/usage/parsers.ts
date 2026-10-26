@@ -88,3 +88,11 @@ export function parseClaudeUsage(payload: unknown): CollectedUsage {
   }
   return { identityKey: null, plan: null, windows };
 }
+/** One `model/list` page: the model IDs the account's plan offers, or null when the page is unreadable. */
+export function parseCodexModels(payload: unknown): { models: string[]; nextCursor: string | null } | null {
+  const page = object(payload);
+  if (!Array.isArray(page?.data)) return null;
+  const models = page.data.map(entry => string(object(entry)?.model));
+  if (models.some(model => model === null)) return null;
+  return { models: models as string[], nextCursor: string(page.nextCursor) };
+}

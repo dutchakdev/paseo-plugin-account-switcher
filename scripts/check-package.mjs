@@ -13,18 +13,19 @@ const REQUIRED = [
   "index.client.tsx", "index.server.ts", "server/launcher-artifact.ts", "shared/contracts.ts",
 ];
 const FORBIDDEN = ["tests/", "docs/", "scripts/", ".github/", ".local/", "node_modules/", "paseo-plugin.json.git"];
-// The plugin directory rejects overviews that carry install commands.
+// The plugin directory rejects overviews, translations included, that carry install commands.
 const OVERVIEW_COMMANDS = /paseo plugin add|npm install|\bnpm i\b/;
+const OVERVIEW_FILE = /^OVERVIEW(\.[^/]+)?\.md$/;
 
 /** Problems with a packed tarball, given its file list and the files the registry reads. */
-export function inspectPackage({ files, manifest, overview, sourceManifest, packageJson, shrinkwrap }) {
+export function inspectPackage({ files, manifest, overviews = {}, sourceManifest, packageJson, shrinkwrap }) {
   const problems = [];
   for (const file of REQUIRED) if (!files.includes(file)) problems.push(`missing ${file}`);
   for (const file of files) if (FORBIDDEN.some((prefix) => file.startsWith(prefix))) problems.push(`unexpected ${file}`);
   if (JSON.stringify(manifest) !== JSON.stringify(publishedManifest(sourceManifest))) {
     problems.push("paseo-plugin.json differs from the source manifest without its build commands");
   }
-  if (overview !== undefined && OVERVIEW_COMMANDS.test(overview)) problems.push("OVERVIEW.md contains an install command");
+  for (const [file, text] of Object.entries(overviews)) if (OVERVIEW_COMMANDS.test(text)) problems.push(`${file} contains an install command`);
   // Paseo installs npm plugins with npm, which honors only a published shrinkwrap.
   if (packageJson) problems.push(...inspectShrinkwrap(shrinkwrap, packageJson));
   return problems;
@@ -45,7 +46,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const problems = inspectPackage({
     files,
     manifest: JSON.parse(extract("paseo-plugin.json") ?? "null"),
-    overview: extract("OVERVIEW.md"),
+    overviews: Object.fromEntries(files.filter((file) => OVERVIEW_FILE.test(file)).map((file) => [file, extract(file)])),
     sourceManifest: JSON.parse(readFileSync(join(root, "paseo-plugin.json"), "utf8")),
     packageJson: JSON.parse(extract("package.json") ?? "null"),
     shrinkwrap: JSON.parse(extract("npm-shrinkwrap.json") ?? "null"),

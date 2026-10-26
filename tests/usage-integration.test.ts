@@ -11,6 +11,8 @@ vi.mock("../server/usage",()=>({
   createUsageService:()=>({start:vi.fn(),close:vi.fn(async()=>{}),invalidate:vi.fn(),refresh:vi.fn(async()=>[])}),
   readCredentialVersion:vi.fn(async()=>"present:fixture"),
 }));
+// Renewal reads real credentials; these tests use the real system Claude home.
+vi.mock("../server/usage/claude",()=>({renewExpiredClaudeToken:vi.fn(async()=>false)}));
 vi.mock("../server/auth",async importOriginal=>({
   ...await importOriginal<typeof import("../server/auth")>(),
   probeAccount:vi.fn(async()=>({identityKey:"fixture-identity",email:null,plan:null,authStatus:"ready"})),
