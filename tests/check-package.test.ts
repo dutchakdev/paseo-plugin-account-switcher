@@ -9,7 +9,7 @@ import { publishedManifest } from "../scripts/pack-manifest.mjs";
 const read = (name: string) => readFileSync(fileURLToPath(new URL(`../${name}`, import.meta.url)), "utf8");
 const sourceManifest = JSON.parse(read("paseo-plugin.json"));
 const files = [
-  "package.json", "npm-shrinkwrap.json", "paseo-plugin.json", "OVERVIEW.md", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md",
+  "package.json", "npm-shrinkwrap.json", "paseo-plugin.json", "OVERVIEW.md", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "assets/icon.png",
   "index.client.tsx", "index.server.ts", "server/launcher-artifact.ts", "shared/contracts.ts", "client/runtime.ts",
 ];
 const overviews = { "OVERVIEW.md": read("OVERVIEW.md"), "OVERVIEW.zh-CN.md": read("OVERVIEW.zh-CN.md") };
@@ -27,6 +27,10 @@ describe("packed tarball", () => {
 
   it("rejects a manifest that still carries the Git-only build commands", () => {
     expect(inspect({ manifest: sourceManifest })).toEqual(["paseo-plugin.json differs from the source manifest without its build commands"]);
+  });
+
+  it("requires the icon the manifest declares, which the plugin directory reads from the tarball", () => {
+    expect(inspect({ files: files.filter((file) => file !== "assets/icon.png") })).toEqual(["missing assets/icon.png, the manifest icon"]);
   });
 
   it("rejects an overview with an install command, which the plugin directory refuses", () => {

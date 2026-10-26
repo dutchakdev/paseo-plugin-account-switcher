@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The plugin directory shows the plugin icon on the listing. The manifest declares it as `assets/icon.png`, moved from `docs/assets/`, and the package check fails when the tarball lacks the icon the manifest names.
+
+### Changed
+
+- Requires Paseo 0.11 or newer, on the daemon and in the app. Paseo 0.8 to 0.10 and the 0.11.0 betas refuse a manifest with an `icon` field. Those versions can stay on 0.5.0: `paseo plugin install dutchakdev/paseo-plugin-account-switcher --ref v0.5.0`.
+
 ## 0.5.0 - 2026-10-26
 
 ### Added

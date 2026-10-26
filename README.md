@@ -1,4 +1,4 @@
-<img src="docs/assets/icon.png" width="88" align="right" alt="">
+<img src="assets/icon.png" width="88" align="right" alt="">
 
 # Account Switcher for Paseo
 
@@ -18,7 +18,7 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 
 ## Requirements
 
-- **Paseo 0.8.x through 0.13.x**, including beta releases, on a **macOS or Linux** daemon and on the connected client.
+- **Paseo 0.11.x through 0.13.x**, including beta releases after 0.11.0, on a **macOS or Linux** daemon and on the connected client.
 - **Node.js 22.12.0 or newer**, with npm.
 - The official **Paseo** CLI and at least one of **Claude Code** or **Codex** available to the daemon. A provider whose CLI is missing is skipped; after installing it, reload the plugin and select **Enable** in its section.
 - Claude or ChatGPT subscription authentication. API keys and custom authentication/provider overrides are unsupported.
@@ -35,16 +35,16 @@ On Paseo 0.11.0 or a later release, including 0.12 and 0.13, install the reviewe
 paseo plugin add dutchakdev/account-switcher
 ```
 
-On Paseo 0.9 and 0.10, and on the 0.11.0 betas, install from npm. On 0.11 and later, npm also gets a new version before the directory approves it:
+npm gets a new version before the directory approves it:
 
 ```sh
 paseo plugin install npm:paseo-plugin-account-switcher
 ```
 
-On Paseo 0.8, install from GitHub. Paseo then runs the manifest's dependency and build steps on the daemon:
+Paseo 0.8 to 0.10 and the 0.11.0 betas refuse the manifest's `icon` field. They can stay on 0.5.0, the last release for them, installed from GitHub. Paseo then runs the manifest's dependency and build steps on the daemon:
 
 ```sh
-paseo plugin install dutchakdev/paseo-plugin-account-switcher
+paseo plugin install dutchakdev/paseo-plugin-account-switcher --ref v0.5.0
 ```
 
 To review or change the source first, install a [local checkout](docs/installation.md#install-a-local-checkout).

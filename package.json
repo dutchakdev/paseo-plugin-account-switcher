@@ -62,6 +62,7 @@
   "files": [
     "paseo-plugin.json",
     "npm-shrinkwrap.json",
+    "assets/icon.png",
     "OVERVIEW.md",
     "OVERVIEW.*.md",
     "index.client.tsx",

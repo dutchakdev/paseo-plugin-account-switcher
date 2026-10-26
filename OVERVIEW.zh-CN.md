@@ -12,7 +12,7 @@ Account Switcher 让你在 Paseo 中使用多个 Claude 和 ChatGPT/Codex 订阅
 
 ## 设置
 
-- macOS 或 Linux 守护进程上的 Paseo 0.8 至 0.13，以及 Node.js 22.12 或更高版本。
+- macOS 或 Linux 守护进程上的 Paseo 0.11 至 0.13，以及 Node.js 22.12 或更高版本。
 - 守护进程上需要官方 Paseo CLI，以及 Claude Code 或 Codex 至少其一。缺少 CLI 的提供商会显示为不可用；安装后重新加载插件，并在该提供商的分区中选择 **Enable**。
 - 每个账号都需要 Claude 或 ChatGPT 订阅。不支持 API 密钥。添加账号时，会在 Paseo 中运行官方 CLI 登录流程。
 
