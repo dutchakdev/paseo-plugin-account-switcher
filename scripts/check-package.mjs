@@ -25,6 +25,8 @@ export function inspectPackage({ files, manifest, overviews = {}, sourceManifest
   if (JSON.stringify(manifest) !== JSON.stringify(publishedManifest(sourceManifest))) {
     problems.push("paseo-plugin.json differs from the source manifest without its build commands");
   }
+  // The plugin directory resolves the manifest icon inside the tarball.
+  if (manifest?.icon && !files.includes(manifest.icon)) problems.push(`missing ${manifest.icon}, the manifest icon`);
   for (const [file, text] of Object.entries(overviews)) if (OVERVIEW_COMMANDS.test(text)) problems.push(`${file} contains an install command`);
   // Paseo installs npm plugins with npm, which honors only a published shrinkwrap.
   if (packageJson) problems.push(...inspectShrinkwrap(shrinkwrap, packageJson));

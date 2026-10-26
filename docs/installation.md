@@ -6,7 +6,7 @@
 
 Account Switcher runs on the machine hosting your Paseo daemon. Its UI appears in connected Paseo clients; credentials and provider processes stay on the daemon.
 
-Use a macOS or Linux daemon, Paseo **0.8.x through 0.13.x** on both daemon and client, and Node.js **22.12.0 or newer**. Beta releases are included: Paseo also checks a prerelease against its stable core version, so `0.13.0-beta.1` satisfies the manifest's `0.13.*` range. See [Paseo's compatibility rules](https://paseo.sh/docs/plugins/reference#requirements).
+Use a macOS or Linux daemon, Paseo **0.11.x through 0.13.x** on both daemon and client, and Node.js **22.12.0 or newer**. Beta releases are included: Paseo also checks a prerelease against its stable core version, so `0.13.0-beta.1` satisfies the manifest's `0.13.*` range. The exception is the 0.11.0 betas: they predate the manifest `icon` field and refuse the manifest. Paseo 0.8 to 0.10 refuse it too; they can stay on 0.5.0, the last release for them (see [Git installations](#git-installations)). See [Paseo's compatibility rules](https://paseo.sh/docs/plugins/reference#requirements).
 
 Install the official `paseo` CLI and at least one of `claude` or `codex` for the daemon's operating-system user. Each provider CLI you want to use must be discoverable through the daemon's PATH or its configured Paseo provider command. A provider whose CLI is missing gets no launcher: Accounts says so and hides its **Current CLI** account. After installing it, reload the plugin, then select **Enable** in that provider's section if switching is already on for the other.
 
@@ -26,7 +26,7 @@ The directory pins an npm version once a reviewer approves it, so a release reac
 
 ## npm installations
 
-On Paseo 0.9 and newer, including the 0.11.0 betas, install the published package:
+Install the published package:
 
 ```sh
 paseo plugin install npm:paseo-plugin-account-switcher --host 127.0.0.1:6767
@@ -36,7 +36,7 @@ Paseo installs the package and its one runtime dependency, `@iarna/toml`, withou
 
 ## Git installations
 
-`paseo plugin install` also accepts a Git source; use one you trust. From Paseo 0.11.0, a bare `owner/name` names a plugin directory entry, so prefix the repository with `git:`, as in `git:dutchakdev/paseo-plugin-account-switcher`. Earlier versions, including the 0.11.0 betas, read `dutchakdev/paseo-plugin-account-switcher` as a GitHub repository. The manifest declares the required preparation steps:
+`paseo plugin install` also accepts a Git source; use one you trust. From Paseo 0.11.0, a bare `owner/name` names a plugin directory entry, so prefix the repository with `git:`, as in `git:dutchakdev/paseo-plugin-account-switcher`. Earlier versions, including the 0.11.0 betas, read `dutchakdev/paseo-plugin-account-switcher` as a GitHub repository; they can install only up to 0.5.0, with `--ref v0.5.0`. The manifest declares the required preparation steps:
 
 ```sh
 npm ci --ignore-scripts --legacy-peer-deps
@@ -131,7 +131,7 @@ paseo plugin enable account-switcher --host 127.0.0.1:6767
 
 | Symptom | What to check |
 | --- | --- |
-| Accounts is missing | Confirm the selected host, Paseo 0.8.x through 0.13.x (including beta releases) on the app and daemon, the global plugin switch, and `running` status. |
+| Accounts is missing | Confirm the selected host, Paseo 0.11.x through 0.13.x (including beta releases after 0.11.0) on the app and daemon, the global plugin switch, and `running` status. |
 | Provider CLI not found | Neither CLI was found. Check the installations and the daemon user's PATH or configured provider commands. A terminal shell's PATH can differ from a background daemon's. |
 | A provider says its CLI was not found | That provider is skipped; the other keeps working. Install its CLI or configure its command, reload the plugin, then select **Enable** in its section. |
 | Authentication override error | Check provider settings, CLI arguments, and the daemon environment for API keys, custom endpoints, or alternate providers. Use subscription authentication for this plugin. Do not paste secret values into a report. |

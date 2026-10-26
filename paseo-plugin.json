@@ -1,1 +1,1 @@
-{ "id": "account-switcher", "requirements": { "paseo": "^0.8.0 || 0.9.* || 0.10.* || 0.11.* || 0.12.* || 0.13.*" }, "build": [["npm", "ci", "--ignore-scripts", "--legacy-peer-deps"], ["npm", "run", "build"]] }
+{ "id": "account-switcher", "icon": "assets/icon.png", "requirements": { "paseo": "0.11.* || 0.12.* || 0.13.*" }, "build": [["npm", "ci", "--ignore-scripts", "--legacy-peer-deps"], ["npm", "run", "build"]] }
