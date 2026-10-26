@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26272D"/>
+      <stop offset="1" stop-color="#141417"/>
+    </linearGradient>
+    <linearGradient id="back" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F4A27E"/>
+      <stop offset="1" stop-color="#D9714D"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Switch ring: two clockwise arcs with arrowheads on one circle (r=184) -->
+  <g>
+    <path d="M81.0,199.1 A184 184 0 0 1 336.7,90.6" fill="none" stroke="#737683" stroke-width="22" stroke-linecap="round"/>
+    <path d="M323.5,117.6 L388.4,128.2 L349.8,63.7Z" fill="#737683" stroke="#737683" stroke-width="6" stroke-linejoin="round"/>
+    <path d="M431.0,312.9 A184 184 0 0 1 175.3,421.4" fill="none" stroke="#737683" stroke-width="22" stroke-linecap="round"/>
+    <path d="M188.5,394.4 L123.6,383.8 L162.2,448.3Z" fill="#737683" stroke="#737683" stroke-width="6" stroke-linejoin="round"/>
+  </g>
+  <!-- Back account -->
+  <g fill="url(#back)">
+    <circle cx="218" cy="200" r="44"/>
+    <path d="M144 340c0-52 33-84 74-84s74 32 74 84z"/>
+  </g>
+  <!-- Front account, outlined in the background color so the two read apart -->
+  <g fill="#F5F5F7" stroke="#1C1D21" stroke-width="16" paint-order="stroke">
+    <circle cx="294" cy="240" r="48"/>
+    <path d="M216 370c0-54 35-86 78-86s78 32 78 86z"/>
+  </g>
+</svg>

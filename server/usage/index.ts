@@ -8,7 +8,7 @@ import { object } from "./parsers";
 
 export type QuotaAccount = { id: string; provider: Provider; home: string; command: string[]; env: NodeJS.ProcessEnv; identityKey: string | null; generation: number; credentialVersion?: string; identityCredentialVersion?: string; requireIdentityVerification?: boolean };
 export { readCredentialVersion } from "./credentials";
-export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[] };
+export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[]; models?: string[] | null };
 export type FetchUsage = (account: QuotaAccount, signal?: AbortSignal) => Promise<CollectedUsage>;
 export type AccountReadOptions = { verifyAccountId?: string };
 export type UsageOptions = { getAccounts: (input?: AccountReadOptions) => Promise<QuotaAccount[]>; fetchUsage?: FetchUsage; cachePath?: string; now?: () => number };
@@ -161,7 +161,7 @@ export function createUsageService(options: UsageOptions) {
         if(requested&&account.credentialVersion!==verified.credentialVersion&&(!identityProven(account)||!identityProven(verified)||result?.identityKey!==account.identityKey))failure??=new UsageError("unavailable","response_identity_unverified");
         const checkedAt = new Date(now()).toISOString();
         if (result && !failure) {
-          const snapshot: UsageSnapshot = {accountId:account.id,provider:account.provider,status:"ok",plan:result.plan,windows:result.windows,fetchedAt:checkedAt,checkedAt,nextRetryAt:null,error:null};
+          const snapshot: UsageSnapshot = {accountId:account.id,provider:account.provider,status:"ok",plan:result.plan,windows:result.windows,models:result.models??null,fetchedAt:checkedAt,checkedAt,nextRetryAt:null,error:null};
           entry.snapshot=snapshot;entry.success=account.identityKey===null?undefined:snapshot;entry.attempts=0;entry.retryAt=0;
         } else {
           const error=failure??new UsageError("unavailable","request_failed");
@@ -170,7 +170,7 @@ export function createUsageService(options: UsageOptions) {
           entry.retryAt=now()+backoff;
           if (error.status==="needs_auth") entry.success=undefined;
           const previous=entry.success;
-          entry.snapshot={accountId:account.id,provider:account.provider,status:error.status==="needs_auth"?"needs_auth":previous?"stale":"unavailable",plan:previous?.plan??null,windows:previous?.windows??[],fetchedAt:previous?.fetchedAt??null,checkedAt,nextRetryAt:new Date(entry.retryAt).toISOString(),error:error.message};
+          entry.snapshot={accountId:account.id,provider:account.provider,status:error.status==="needs_auth"?"needs_auth":previous?"stale":"unavailable",plan:previous?.plan??null,windows:previous?.windows??[],models:previous?.models??null,fetchedAt:previous?.fetchedAt??null,checkedAt,nextRetryAt:new Date(entry.retryAt).toISOString(),error:error.message};
         }
         await persist();
       } finally { release(); }

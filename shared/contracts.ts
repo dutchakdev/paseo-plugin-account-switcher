@@ -48,6 +48,8 @@ export const UsageSnapshotSchema = z.object({
   accountId: z.string(), provider: ProviderSchema,
   status: z.enum(["ok", "stale", "needs_auth", "unavailable"]),
   plan: z.string().nullable(), windows: z.array(UsageWindowSchema),
+  // Model IDs the account's plan offers; null or absent when the provider does not list them.
+  models: z.array(z.string()).nullable().optional(),
   fetchedAt: z.string().nullable(), checkedAt: z.string(), nextRetryAt: z.string().nullable(),
   error: z.string().nullable(),
 });

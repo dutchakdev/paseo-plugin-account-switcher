@@ -5,7 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { applySwitch, cliName, missingCli, prepareSwitch, refreshUsage } from "../shared/contracts";
 import { body, Button, heading, InlineAction, muted, Notice, QuotaSummary, row, StatusDot, tabular } from "./components";
 import { useAccountsData, useAction, useNow } from "./data";
-import { currentAccount, currentAccountName, errorMessage, idleForSwitch, providerName, supportedProvider, usageSummary } from "./format";
+import { currentAccount, currentAccountName, errorMessage, agentModel, idleForSwitch, providerName, supportedProvider, switchRisk, usageSummary } from "./format";
 import { accountAvailable } from "./login";
 
 type SwitcherCallbacks = { onChanged(): void; openAccounts(): void; runtimeError?: string | null };
@@ -49,6 +49,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
   const agentState = live.isPending ? { text: "checking agent status", tone: "muted" as const }
     : idle ? { text: "agent idle", tone: "success" as const } : { text: "agent busy · apply after the response", tone: "warning" as const };
   const leave = () => { close(); openAccounts(); };
+  const risk = pending ? switchRisk({ label: pending.label, models: usage.data?.accounts.find((item) => item.accountId === pending.id)?.models }, agentModel(live.data)) : null;
   return <View style={{ gap: 12, minWidth: 0 }}>
     <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
       <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
@@ -100,6 +101,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
       })}
     </View> : null}
     {pending ? <View style={{ gap: 8 }}>
+      {risk ? <Notice theme={theme} tone="warning">{risk}</Notice> : null}
       <View style={row}>
         <Button theme={theme} variant="primary" disabled={disabled || !idle || !accountAvailable(pending)} onPress={() => action.run(async () => {
           // Recheck immediately before requesting the daemon's own idle guard.

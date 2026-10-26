@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A Simplified Chinese overview, which the Paseo plugin directory shows to readers who choose Chinese.
+- A plugin icon for listings, in `docs/assets/icon.png`.
+- Before **Apply** on a Codex chat, the switcher warns when the selected account's plan does not offer the agent's model, which would make the next message fail with `model_not_found`, and lists the models that plan offers. The plugin reads each Codex account's models together with its limits.
+
+### Fixed
+
+- A Claude account left idle no longer shows **Sign in again** while its sign-in is confirmed. Its access token had expired with no Claude session to renew it, so the limits request was refused. Before a limits check, the plugin now lets the official CLI renew an expired token with `claude -p /usage --no-session-persistence`, at most every 10 minutes per account; it sends no model message and saves no session.
+
+### Changed
+
+- The package description names what the plugin does, which the plugin directory shows as its summary. The overview also lists the monthly credit and spend limits added in 0.4.0, and says that a failed switch restores the previous account.
+
 ## 0.4.0 - 2026-10-24
 
 ### Added

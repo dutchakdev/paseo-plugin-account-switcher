@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { collectClaudeUsage, claudeKeychainTarget } from "../server/usage/claude";
+import { collectClaudeUsage, claudeKeychainTarget, renewExpiredClaudeToken } from "../server/usage/claude";
 import { collectCodexUsage } from "../server/usage/codex";
 import { readCredentialVersion, type QuotaAccount } from "../server/usage/index";
 
@@ -69,13 +69,43 @@ describe("isolated quota collectors", () => {
     expect(await readCredentialVersion(account,{platform:"linux",readFile:async()=>{throw Object.assign(new Error("SECRET"),{code:"ENOENT"});}})).toBe("absent");
     expect(await readCredentialVersion(account,{platform:"darwin",readKeychain:async()=>{throw new Error("SECRET");}})).toBe("unavailable");
   });
-  it("runs only the Codex initialization and account quota protocol with the supplied environment", async () => {
-    const script = `const readline=require('node:readline');let initialized=false;const rl=readline.createInterface({input:process.stdin});rl.on('line',line=>{const m=JSON.parse(line);let result;if(m.method==='initialize')result={};else if(m.method==='initialized'){initialized=true;return;}else if(m.method==='account/read'&&initialized&&m.params.refreshToken===false)result={account:{type:'chatgpt',planType:'plus'}};else if(m.method==='account/rateLimits/read'&&process.env.ONLY_ACCOUNT==='yes')result={accountId:'a',rateLimits:{primary:{usedPercent:0,windowDurationMins:15,resetsAt:0}}};else process.exit(3);process.stdout.write(JSON.stringify({id:m.id,result})+'\\n');});`;
+  it("runs only the Codex initialization, account quota and model list protocol with the supplied environment", async () => {
+    const script = `const readline=require('node:readline');let initialized=false;const rl=readline.createInterface({input:process.stdin});rl.on('line',line=>{const m=JSON.parse(line);let result;if(m.method==='initialize')result={};else if(m.method==='initialized'){initialized=true;return;}else if(m.method==='account/read'&&initialized&&m.params.refreshToken===false)result={account:{type:'chatgpt',planType:'plus'}};else if(m.method==='account/rateLimits/read'&&process.env.ONLY_ACCOUNT==='yes')result={accountId:'a',rateLimits:{primary:{usedPercent:0,windowDurationMins:15,resetsAt:0}}};else if(m.method==='model/list'&&!m.params.cursor)result={data:[{model:'model-one'}],nextCursor:'page-2'};else if(m.method==='model/list'&&m.params.cursor==='page-2')result={data:[{model:'model-two'}],nextCursor:null};else process.exit(3);process.stdout.write(JSON.stringify({id:m.id,result})+'\\n');});`;
     const result = await collectCodexUsage({...account,provider:"codex",home:process.cwd(),command:[process.execPath,"-e",script,"--"],env:{ONLY_ACCOUNT:"yes"}});
-    expect(result).toMatchObject({identityKey:"a",plan:"plus",windows:[{usedPercent:0,windowDurationMins:15}]});
+    expect(result).toMatchObject({identityKey:"a",plan:"plus",windows:[{usedPercent:0,windowDurationMins:15}],models:["model-one","model-two"]});
+  });
+  it("keeps Codex limits when the model list fails, marking the models unknown", async () => {
+    const script=`require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(!m.id)return;if(m.method==='model/list'){process.stdout.write(JSON.stringify({id:m.id,error:{code:-32601,message:'unknown method'}})+'\\n');return;}const result=m.method==='account/read'?{account:{type:'chatgpt'}}:m.method==='account/rateLimits/read'?{accountId:'a',rateLimits:{primary:{usedPercent:12}}}:{};process.stdout.write(JSON.stringify({id:m.id,result})+'\\n');});`;
+    await expect(collectCodexUsage({...account,provider:"codex",home:process.cwd(),command:[process.execPath,"-e",script,"--"],env:{}})).resolves.toMatchObject({windows:[{usedPercent:12}],models:null});
   });
   it("rejects a Codex quota response for a different authenticated account", async () => {
     const script=`require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(!m.id)return;const result=m.method==='account/read'?{account:{type:'chatgpt'}}:m.method==='account/rateLimits/read'?{accountId:'another-account',rateLimits:{primary:{usedPercent:12}}}:{};process.stdout.write(JSON.stringify({id:m.id,result})+'\\n');});`;
     await expect(collectCodexUsage({...account,provider:"codex",home:process.cwd(),command:[process.execPath,"-e",script,"--"],env:{}})).rejects.toMatchObject({status:"needs_auth",code:"identity_changed"});
+  });
+});
+
+describe("expired Claude access tokens", () => {
+  const now = Date.parse("2026-10-26T12:00:00Z");
+  const stored = (oauth: Record<string, unknown>) => async () => JSON.stringify({ claudeAiOauth: { accessToken: "fixture", ...oauth } });
+  const system = { ...account, command: ["/bin/claude", "--flag"], env: { ...account.env, HOME: "/user" } };
+  // An idle account's token expires without any CLI running; the usage endpoint then answers 401.
+  it("asks the account's own CLI to renew an expired token, without a model turn or a saved session", async () => {
+    const run = vi.fn(async () => {});
+    await expect(renewExpiredClaudeToken(system, { platform: "linux", now: () => now, run, readFile: stored({ refreshToken: "r", expiresAt: now - 1 }) })).resolves.toBe(true);
+    expect(run).toHaveBeenCalledExactlyOnceWith(["/bin/claude", "--flag", "-p", "/usage", "--no-session-persistence"], system.env);
+  });
+  it("renews a token about to expire, since the usage request would race it", async () => {
+    const run = vi.fn(async () => {});
+    await renewExpiredClaudeToken(system, { platform: "linux", now: () => now, run, readFile: stored({ refreshToken: "r", expiresAt: now + 30_000 }) });
+    expect(run).toHaveBeenCalledOnce();
+  });
+  it("leaves a valid token, a token it cannot renew, and unreadable credentials alone", async () => {
+    const run = vi.fn(async () => {});
+    for (const readFile of [stored({ refreshToken: "r", expiresAt: now + 3_600_000 }), stored({ expiresAt: now - 1 }), stored({ refreshToken: "r" }), async () => "not json", async () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); }])
+      await expect(renewExpiredClaudeToken(system, { platform: "linux", now: () => now, run, readFile })).resolves.toBe(false);
+    expect(run).not.toHaveBeenCalled();
+  });
+  it("reports a failed renewal as attempted, leaving the usage request to report sign-in", async () => {
+    await expect(renewExpiredClaudeToken(system, { platform: "linux", now: () => now, run: async () => { throw new Error("exit 1"); }, readFile: stored({ refreshToken: "r", expiresAt: now - 1 }) })).resolves.toBe(true);
   });
 });

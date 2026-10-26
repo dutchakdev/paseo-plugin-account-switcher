@@ -7,7 +7,7 @@ import type { PaseoApi } from "@getpaseo/client";
 
 const mocks = vi.hoisted(() => ({
   launchLogin: vi.fn(), probeAccount: vi.fn(), removeAccountCredentials: vi.fn(),
-  prepareRuntime: vi.fn(), reconcileIntegration: vi.fn(), execFile: vi.fn(),
+  prepareRuntime: vi.fn(), reconcileIntegration: vi.fn(), execFile: vi.fn(), renewExpiredClaudeToken: vi.fn(),
   failRemovePath: undefined as string | undefined,
   usage: {
     start: vi.fn(), close: vi.fn(), invalidate: vi.fn(), refresh: vi.fn(), list: vi.fn(),
@@ -39,6 +39,7 @@ vi.mock("../server/integration", () => ({
 }));
 vi.mock("../server/profiles", () => ({ prepareProfile: async () => {} }));
 vi.mock("../server/usage", () => ({ createUsageService: () => mocks.usage, readCredentialVersion: async () => "fixture-version" }));
+vi.mock("../server/usage/claude", () => ({ renewExpiredClaudeToken: mocks.renewExpiredClaudeToken }));
 
 import { AccountController } from "../server/controller";
 import { AccountStore, accountFrom } from "../server/store";
@@ -57,6 +58,7 @@ beforeEach(() => {
   mocks.removeAccountCredentials.mockReset().mockResolvedValue(undefined);
   mocks.prepareRuntime.mockReset().mockResolvedValue(undefined);
   mocks.reconcileIntegration.mockReset().mockResolvedValue(undefined);
+  mocks.renewExpiredClaudeToken.mockReset().mockResolvedValue(false);
   mocks.execFile.mockReset().mockImplementation((...args: unknown[]) => { (args.at(-1) as (error: null, stdout: string) => void)(null, ""); });
   mocks.usage.close.mockResolvedValue(undefined);
   mocks.usage.refresh.mockResolvedValue([]);
@@ -158,6 +160,29 @@ describe("persistent login isolation", () => {
     await expect(controller.login(paseo, account.id)).rejects.toThrow("Terminal unavailable");
     expect(accountFrom(await controller.store.read(), account.id).loginToken).toBeNull();
     await expect(controller.login(paseo, account.id)).resolves.toMatchObject({ terminalId: "login-terminal" });
+  });
+});
+
+describe("expired Claude tokens", () => {
+  it("lets the CLI renew before identity verification for limits, at most once per interval", async () => {
+    const { controller } = await fixture();
+    await controller.store.change(registry => { registry.commands = { claude: ["fixture-cli"], codex: ["fixture-cli"] }; });
+    mocks.renewExpiredClaudeToken.mockResolvedValue(true);
+    await controller.quotaAccounts({ verifyAccountId: "system-claude" });
+    await controller.quotaAccounts({ verifyAccountId: "system-claude" });
+    await controller.quotaAccounts({ verifyAccountId: "system-codex" });
+    expect(mocks.renewExpiredClaudeToken).toHaveBeenCalledOnce();
+    expect(mocks.renewExpiredClaudeToken.mock.calls[0][0]).toMatchObject({ id: "system-claude", command: ["fixture-cli"] });
+    const probe = mocks.probeAccount.mock.calls.findIndex(([item]) => item.id === "system-claude");
+    expect(mocks.renewExpiredClaudeToken.mock.invocationCallOrder[0]).toBeLessThan(mocks.probeAccount.mock.invocationCallOrder[probe]);
+  });
+
+  it("checks again on the next verification when the token was still valid", async () => {
+    const { controller } = await fixture();
+    await controller.store.change(registry => { registry.commands = { claude: ["fixture-cli"], codex: ["fixture-cli"] }; });
+    await controller.quotaAccounts({ verifyAccountId: "system-claude" });
+    await controller.quotaAccounts({ verifyAccountId: "system-claude" });
+    expect(mocks.renewExpiredClaudeToken).toHaveBeenCalledTimes(2);
   });
 });
 

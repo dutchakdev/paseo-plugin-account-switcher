@@ -6,6 +6,8 @@ import { AccountController } from "../server/controller";
 import { UsageError } from "../server/usage";
 
 const boundary=vi.hoisted(()=>({fetch:vi.fn(),probe:vi.fn()}));
+// Renewal reads real credentials; these tests use the real system Claude home.
+vi.mock("../server/usage/claude",async original=>({...await original<typeof import("../server/usage/claude")>(),renewExpiredClaudeToken:vi.fn(async()=>false)}));
 vi.mock("../server/auth",async original=>({...await original<typeof import("../server/auth")>(),probeAccount:boundary.probe}));
 vi.mock("../server/usage",async original=>{
   const actual=await original<typeof import("../server/usage")>();
