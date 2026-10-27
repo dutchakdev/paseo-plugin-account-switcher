@@ -14,6 +14,7 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 - **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. Changes apply only when you choose **Apply**.
 - **Keep your setup.** Profiles separate credentials while sharing provider settings, skills, and session history.
 - **Track account limits.** See used and remaining percentages, reset times, and freshness for every reported window.
+- **Switch from the keyboard.** Type `/account work` in a chat, or pick **Make “Work” the Codex default** in the Command Center (⌘K).
 - **Use a default.** Choose the account used by new agents for each provider. When the limits show it would fail, a new agent starts on the account with the most room instead.
 
 ## Requirements
@@ -98,6 +99,16 @@ Before signing in again, switch agents away from that profile. To remove a manag
 3. When the agent is idle and has no pending permission request, select **Apply “name”**.
 
 <img src="docs/assets/account-dialog.png" width="420" alt="The Account dialog for a Claude agent: limits of its current account and the accounts it can switch to.">
+
+### From the keyboard
+
+Type `/account` in the message field followed by an account name, or `default` for the provider's default account. Names match without regard to case, and a unique beginning is enough: `/account sec` finds **Second**. Several matches or none report the accounts to choose from.
+
+- When the agent is idle and nothing warns against the switch, `/account` applies it at once.
+- While the agent is responding, or when the account's plan does not offer the agent's model, the account is selected and the switcher opens, where **Apply** and the warning are visible.
+- `/account` alone, or the account already in use, opens the switcher.
+
+The Command Center (⌘K) lists **Make “name” the Claude default** and **Make “name” the Codex default** for every signed-in account that is not already its provider's default.
 
 You can select an account during a response, but it is **never applied automatically**. **Cancel selection** clears it. **All accounts** opens the full account list.
 

@@ -1,5 +1,6 @@
 import type { PluginButtonIcon, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
-import { listAccounts, listUsage, type AccountState, type UsageSnapshot } from "../shared/contracts";
+import { listAccounts, listUsage, setDefaultAccount, type AccountState, type UsageSnapshot } from "../shared/contracts";
+import { defaultCommands } from "./command";
 import { currentAccount, currentAccountName, errorMessage, supportedProvider, usageSummary } from "./format";
 
 // npm installs omit devDependencies, so `@getpaseo/client` types are named through the host SDK entry.
@@ -30,6 +31,8 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
   let modalTarget: PillTarget | null = null;
   let observingDirectory = false;
   let directorySubscription: DirectorySubscription | undefined;
+  // Command Center entries, keyed by item ID with their title, so a rename re-registers only that entry.
+  const defaultItems = new Map<string, { title: string; remove: () => void }>();
 
   function releaseDirectory(subscription: DirectorySubscription | undefined) {
     if (subscription) void subscription.release().catch((error) => {
@@ -74,6 +77,17 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
     }) });
   }
   function updateAllPills() { for (const agent of agents.values()) updatePill(agent); }
+  function syncDefaultItems() {
+    const wanted = state ? defaultCommands(state) : [];
+    for (const [id, item] of defaultItems) if (!wanted.some((command) => command.id === id && command.title === item.title)) { item.remove(); defaultItems.delete(id); }
+    for (const command of wanted) {
+      if (defaultItems.has(command.id)) continue;
+      const remove = client.addCommandCenterItem({ id: command.id, title: command.title, icon: "Users", context: "global",
+        keywords: ["account", "default", command.provider],
+        async onSelect({ rpc }) { await rpc(setDefaultAccount, { provider: command.provider, accountId: command.accountId }); void refreshData(); } });
+      defaultItems.set(command.id, { title: command.title, remove });
+    }
+  }
 
   const unsubscribe = client.paseo.agents.subscribe((update) => {
     if (stopped) return;
@@ -127,7 +141,7 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
       if (usageResult.status === "fulfilled") usage = usageResult.value.accounts;
       dataError = accountsResult.status === "rejected" ? `Could not refresh accounts: ${errorMessage(accountsResult.reason)}`
         : usageResult.status === "rejected" ? `Could not refresh limits: ${errorMessage(usageResult.reason)}` : null;
-      updateAllPills(); notify();
+      updateAllPills(); syncDefaultItems(); notify();
     } catch (error) {
       if (!stopped) { dataError = `Could not refresh account switchers: ${errorMessage(error)}`; notify(); }
     } finally {
@@ -144,6 +158,7 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
     getError: () => directoryError ?? dataError,
     getModalTarget: () => modalTarget,
     closeModal,
+    openSwitcher: openModal,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     stop() {
       if (stopped) return;
@@ -153,6 +168,8 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
       listeners.clear();
       for (const { registration } of pills.values()) registration.remove();
       pills.clear(); agents.clear();
+      for (const { remove } of defaultItems.values()) remove();
+      defaultItems.clear();
     },
   };
 }
