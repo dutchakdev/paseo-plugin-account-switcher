@@ -1,6 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import * as rpc from "./shared/contracts";
 import { AccountController } from "./server/controller";
+import { registerPaseoUsage } from "./server/paseo-usage";
 import { profileEnv } from "./server/session-env";
 import { accountFrom } from "./server/store";
 import { appendAccountNote } from "./server/timeline";
@@ -51,6 +52,8 @@ export default function contribute(server:PluginServerContext){
  server.handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
  server.handle(rpc.listUsage,async({visible},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.list({visible})};});
  server.handle(rpc.refreshUsage,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.refresh(accountId)};});
+ // Paseo's Usage view lists the managed accounts too; a daemon before 0.11 has no usage sources, and the Accounts screen still shows the same limits.
+ registerPaseoUsage(server,controller);
  const removeCreate=server.before("agent.create",({request})=>{
   const model=request.config.model;
   if((request.config.provider!=="claude"&&request.config.provider!=="codex")||!model)return request;

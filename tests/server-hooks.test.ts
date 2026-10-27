@@ -153,3 +153,16 @@ describe("notes never decide whether a switch succeeded", () => {
     } finally { controller.read.mockImplementation(async () => controller.registry); }
   });
 });
+
+describe("Paseo's Usage view", () => {
+  it("registers the Account Switcher source when the daemon has usage sources", async () => {
+    const sources: { id: string; discover: (scope: unknown) => Promise<unknown[]> }[] = [];
+    contribute({ handle: () => {}, before: () => () => {}, on: () => () => {}, registerUsageSource: (source: any) => { sources.push(source); } } as any);
+    expect(sources.map(source => source.id)).toEqual(["account-switcher"]);
+    // The mocked registry has no signed-in managed account with an identity, so there is nothing to list.
+    await expect(sources[0].discover({ kind: "global" })).resolves.toEqual([]);
+  });
+  it("starts on a daemon without usage sources", () => {
+    expect(() => start()).not.toThrow();
+  });
+});
