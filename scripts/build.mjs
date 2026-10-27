@@ -7,7 +7,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Review the full license text and update THIRD_PARTY_NOTICES.md when changing
 // any emitted dependency. Dev dependencies absent from the output need no banner.
 const reviewedLicenses = {
-  "@getpaseo/plugin": { version: "0.8.0", file: "paseo-0.8.0.txt" },
+  "@getpaseo/plugin": { version: "0.11.4", file: "paseo-0.11.4.txt" },
   "@iarna/toml": { version: "2.2.5", file: "iarna-toml-2.2.5.txt", installed: "LICENSE" },
   zod: { version: "4.6.7", file: "zod-4.6.7.txt", installed: "LICENSE" },
 };
