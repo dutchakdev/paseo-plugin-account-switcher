@@ -1,11 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const controller = vi.hoisted(() => {
   const bindNewAgent = vi.fn(async (..._args: unknown[]): Promise<unknown> => undefined);
   const apply = vi.fn(async (agentId: string) => ({ agentId, provider: "codex", currentAccountId: "second" }));
   const registry = {
-    accounts: [{ id: "system-codex", label: "Current CLI · Codex", source: "system", provider: "codex" }, { id: "work", label: "Work", source: "managed", provider: "codex" }, { id: "second", label: "Second", source: "managed", provider: "codex" }],
-    bindings: [{ agentId: "agent-1", currentAccountId: "work" }],
+    accounts: [{ id: "system-codex", label: "Current CLI · Codex", source: "system", provider: "codex", home: "/home/me/.codex" }, { id: "work", label: "Work", source: "managed", provider: "codex", home: "/profiles/work" }, { id: "second", label: "Second", source: "managed", provider: "codex", home: "/profiles/second" }],
+    bindings: [{ agentId: "agent-1", provider: "codex", currentAccountId: "work", launchAccountId: "work" }] as { agentId: string; provider: string; currentAccountId: string | null; launchAccountId: string | null }[],
+    integration: { enabled: true, error: null, providers: ["claude", "codex"] },
   };
   const read = vi.fn(async () => registry);
   return {
@@ -43,7 +44,8 @@ describe("the agent's model on its way to account selection", () => {
     expect(created.env).toMatchObject({ KEEP: "1" });
     const opened = await before.get("agent.session_open")!({ request: opening(created.env) }, { paseo: {} });
     expect(controller.bindNewAgent).toHaveBeenCalledWith("agent-1", "codex", "gpt-6.1-sol");
-    expect(opened.env).toEqual({ KEEP: "1" });
+    expect(opened.env).toEqual({ KEEP: "1", CODEX_HOME: "/profiles/work" });
+    expect(opened.env).not.toHaveProperty("PASEO_ACCOUNT_SWITCHER_MODEL");
   });
   it("leaves other providers and agents without a chosen model unmarked", async () => {
     const before = start();
@@ -58,7 +60,55 @@ describe("the agent's model on its way to account selection", () => {
     const created = await before.get("agent.create")!({ request: { config: { provider: "codex", cwd: "/work", model: "gpt-6-luna" }, env: {} } }, { paseo: {} });
     const opened = await before.get("agent.session_open")!({ request: opening(created.env, "resume") }, { paseo: {} });
     expect(controller.bindNewAgent).not.toHaveBeenCalled();
-    expect(opened.env).toEqual({});
+    expect(opened.env).toEqual({ CODEX_HOME: "/profiles/work" });
+  });
+});
+
+describe("the profile a session's environment names", () => {
+  const saved = structuredClone(controller.registry);
+  afterEach(() => { Object.assign(controller.registry, structuredClone(saved)); controller.read.mockImplementation(async () => controller.registry); controller.bindNewAgent.mockReset(); controller.bindNewAgent.mockImplementation(async () => undefined); });
+
+  it("tells Paseo which profile a resumed agent runs on, keeping the rest of its environment", async () => {
+    const before = start();
+    const opened = await before.get("agent.session_open")!({ request: opening({ KEEP: "1", PASEO_ACCOUNT_SWITCHER_MODEL: "gpt-6.1-sol" }, "resume") }, { paseo: {} });
+    expect(opened.env).toEqual({ KEEP: "1", CODEX_HOME: "/profiles/work" });
+  });
+  it("reads the registry after binding, so a new agent gets the profile it was just bound to", async () => {
+    controller.registry.bindings = [];
+    controller.bindNewAgent.mockImplementationOnce(async () => {
+      controller.registry.bindings.push({ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "second" });
+      return { accountId: "second", defaultId: "second", reason: null };
+    });
+    const before = start();
+    const opened = await before.get("agent.session_open")!({ request: opening({ PASEO_ACCOUNT_SWITCHER_MODEL: "gpt-6.1-sol" }) }, { paseo: {} });
+    expect(opened.env).toEqual({ CODEX_HOME: "/profiles/second" });
+  });
+  it("lets the profile replace a login directory the request already carried", async () => {
+    const before = start();
+    const opened = await before.get("agent.session_open")!({ request: opening({ CODEX_HOME: "/home/me/.codex" }, "resume") }, { paseo: {} });
+    expect(opened.env).toEqual({ CODEX_HOME: "/profiles/work" });
+  });
+  it("adds nothing for an agent on the system account, nor while integration is off", async () => {
+    const before = start();
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: "system-codex", launchAccountId: "system-codex" }];
+    expect((await before.get("agent.session_open")!({ request: opening({ KEEP: "1" }, "resume") }, { paseo: {} })).env).toEqual({ KEEP: "1" });
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: "work", launchAccountId: "work" }];
+    controller.registry.integration.enabled = false;
+    expect((await before.get("agent.session_open")!({ request: opening({ KEEP: "1" }, "resume") }, { paseo: {} })).env).toEqual({ KEEP: "1" });
+  });
+  it("opens the session without a profile when the registry cannot be read", async () => {
+    const before = start(), error = vi.spyOn(console, "error").mockImplementation(() => {});
+    controller.read.mockRejectedValue(new Error("registry busy"));
+    try {
+      const opened = await before.get("agent.session_open")!({ request: opening({ KEEP: "1", PASEO_ACCOUNT_SWITCHER_MODEL: "m" }, "resume") }, { paseo: {} });
+      expect(opened.env).toEqual({ KEEP: "1" });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("registry busy"));
+    } finally { error.mockRestore(); }
+  });
+  it("leaves other providers' sessions alone", async () => {
+    const before = start();
+    const opened = await before.get("agent.session_open")!({ request: { ...opening({ KEEP: "1" }, "resume"), provider: "opencode" } }, { paseo: {} });
+    expect(opened.env).toEqual({ KEEP: "1" });
   });
 });
 

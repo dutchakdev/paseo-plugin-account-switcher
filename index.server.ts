@@ -1,6 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import * as rpc from "./shared/contracts";
 import { AccountController } from "./server/controller";
+import { profileEnv } from "./server/session-env";
 import { accountFrom } from "./server/store";
 import { appendAccountNote } from "./server/timeline";
 import type { AccountNote } from "./shared/timeline";
@@ -67,8 +68,11 @@ export default function contribute(server:PluginServerContext){
     if(started)startNotes.set(request.agentId,{note:started,at:now});
    }
   }
+  // Paseo resolves an agent's login, and so its usage, from this session's environment. The launcher applies the profile to the CLI itself; this only lets Paseo see the same one.
+  // The registry is read after any binding above, so a new agent already has its profile. A failed read costs only that hint.
+  const profile=await controller.store.read().then(state=>profileEnv(state,request.agentId,request.provider),error=>{console.error(`Could not name the account profile for agent ${request.agentId}: ${error instanceof Error?error.message:String(error)}`);return{};});
   // The model hint must not reach the provider CLI.
-  return {...request,env};
+  return {...request,env:{...env,...profile}};
  });
  const removeCreated=server.on("agent.created",async({agent},{paseo})=>{
   const pending=startNotes.get(agent.id);startNotes.delete(agent.id);
