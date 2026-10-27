@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { hashAccountKey, UsageScopeSchema, type UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { discoverAccounts, registerPaseoUsage, usageKey, usageReport } from "../server/paseo-usage";
+import { parseClaudeUsage, parseCodexUsage } from "../server/usage/parsers";
 import type { StoredAccount } from "../server/store";
 import type { UsageSnapshot, UsageWindow } from "../shared/contracts";
 
@@ -119,20 +121,19 @@ describe("usageReport", () => {
     const report = usageReport(snapshot({ windows: [fiveHour, sonnet] }));
     if (report.status !== "available") throw new Error("expected an available report");
     const [, model] = report.windows;
-    expect(model).toMatchObject({ id: "seven_day_sonnet:weekly", label: "Weekly · sonnet", usedPct: 19 });
+    expect(model).toMatchObject({ id: "weekly-sonnet:weekly", label: "Weekly · sonnet", usedPct: 19 });
     expect(model?.summary).toBeUndefined();
     expect(model?.shortLabel).toBeUndefined();
   });
-  it("keeps a model window's own id and label when it reports no duration", () => {
+  it("names a model window without a duration after its quota, and keeps its label", () => {
     const report = usageReport(snapshot({ windows: [{ ...sonnet, windowDurationMins: null }] }));
     if (report.status !== "available") throw new Error("expected an available report");
-    expect(report.windows[0]).toMatchObject({ label: "Weekly · sonnet", usedPct: 19 });
-    expect(report.windows[0]?.id).toMatch(/^seven_day_sonnet:/);
+    expect(report.windows[0]).toMatchObject({ id: "weekly-sonnet:window", label: "Weekly · sonnet", usedPct: 19 });
   });
-  it("keeps a window without a duration under its own id and label", () => {
+  it("names a window without a duration after its quota, and keeps its label", () => {
     const report = usageReport(snapshot({ windows: [spend] }));
     if (report.status !== "available") throw new Error("expected an available report");
-    expect(report.windows).toEqual([expect.objectContaining({ id: "extra_usage", label: "Monthly spend", usedPct: 2.5 })]);
+    expect(report.windows).toEqual([expect.objectContaining({ id: "monthly-spend", label: "Monthly spend", usedPct: 2.5 })]);
     expect(report.windows[0]?.summary).toBeUndefined();
   });
   it("keeps a reading with an unknown percentage and does not summarise a window of unknown scope", () => {
@@ -144,7 +145,7 @@ describe("usageReport", () => {
   it("turns each provider-reported amount into a detail", () => {
     const report = usageReport(snapshot({ windows: [fiveHour, spend, { ...weekly, detail: "" }] }));
     if (report.status !== "available") throw new Error("expected an available report");
-    expect(report.details).toEqual([{ id: "extra_usage", label: "Monthly spend", value: "$487.50 of $500.00 left" }]);
+    expect(report.details).toEqual([{ id: "monthly-spend", label: "Monthly spend", value: "$487.50 of $500.00 left" }]);
   });
   it("leaves details out when no window reports an amount", () => {
     const report = usageReport(snapshot());
@@ -161,6 +162,77 @@ describe("usageReport", () => {
     const none = { status: "error", error: "No usage data from the provider yet." };
     expect(usageReport(snapshot({ status: "unavailable", windows: [], plan: null, fetchedAt: null }))).toEqual(none);
     expect(usageReport(undefined)).toEqual(none);
+  });
+});
+
+// Paseo matches the windows a user pins by id, and an id names a quota and its period. The collectors' own window IDs are response positions.
+describe("window ids", () => {
+  const ids = (windows: UsageWindow[]) => {
+    const report = usageReport(snapshot({ windows }));
+    if (report.status !== "available") throw new Error("expected an available report");
+    return report.windows.map(w => w.id);
+  };
+  const idByLabel = (windows: UsageWindow[]) => {
+    const report = usageReport(snapshot({ windows }));
+    if (report.status !== "available") throw new Error("expected an available report");
+    return Object.fromEntries(report.windows.map(w => [w.label, w.id]));
+  };
+  const scoped = (model: string, percent: number) => ({ kind: "weekly_scoped", percent, resets_at: "2026-10-30T00:00:00Z", scope: { model: { display_name: model }, surface: { display_name: "Claude Code" } } });
+  const claude = (...limits: unknown[]) => parseClaudeUsage({ five_hour: { utilization: 10, resets_at: null }, seven_day: null, limits }).windows;
+  // Captured from `account/rateLimits/read` on codex-cli 0.164.0 for a pro account; identifiers replaced.
+  const pro = JSON.parse(readFileSync(new URL("./fixtures/codex-rate-limits-pro.json", import.meta.url), "utf8"));
+  const codex = (slot: "primary" | "secondary", duration: number | null) => {
+    const spark = { ...pro.rateLimitsByLimitId.codex, limitId: "gpt-5.3-codex-spark", limitName: "GPT-5.3-Codex-Spark", primary: null, secondary: null, [slot]: { usedPercent: 5, windowDurationMins: duration, resetsAt: 1793600906 } };
+    return parseCodexUsage({ ...pro, rateLimitsByLimitId: { ...pro.rateLimitsByLimitId, [spark.limitId]: spark } }).windows;
+  };
+  const free = (id: string) => !/weekly_scoped|primary|secondary|:[01]$/.test(id) && /^[A-Za-z0-9._:-]+$/.test(id);
+
+  it("keeps a Claude scoped week under one id when the API reorders its limits", () => {
+    const first = claude(scoped("Opus", 10), scoped("Sonnet", 20)), swapped = claude(scoped("Sonnet", 20), scoped("Opus", 10));
+    expect(first.map(w => w.id)).toContain("weekly_scoped:0");
+    expect(idByLabel(first)).toEqual(idByLabel(swapped));
+    expect(idByLabel(first)).toMatchObject({ "Weekly · Opus · Claude Code": "weekly-opus-claude-code:weekly", "Weekly · Sonnet · Claude Code": "weekly-sonnet-claude-code:weekly" });
+    expect(ids(first).filter(id => id !== "five_hour").every(free)).toBe(true);
+  });
+  it("keeps a Codex model's window under one id when it is reported in the other slot", () => {
+    const asPrimary = codex("primary", 300), asSecondary = codex("secondary", 300);
+    expect(asPrimary.map(w => w.id)).toContain("gpt-5.3-codex-spark:primary");
+    expect(asSecondary.map(w => w.id)).toContain("gpt-5.3-codex-spark:secondary");
+    expect(ids(asPrimary)).toEqual(ids(asSecondary));
+    expect(ids(asPrimary)).toContain("gpt-5.3-codex-spark-5-hours:five_hour");
+    expect(ids(asPrimary).every(free)).toBe(true);
+  });
+  it("tells a Codex model's windows apart by their periods", () => {
+    expect(new Set(ids(codex("primary", 300))).size).toBe(ids(codex("primary", 300)).length);
+    expect(ids(codex("primary", 300))).not.toEqual(ids(codex("primary", 10080)));
+  });
+  it("names an account window without a duration after its quota, not its slot", () => {
+    const mainAs = (slot: "primary" | "secondary") => parseCodexUsage({ rateLimits: { limitId: "codex", [slot]: { usedPercent: 31, resetsAt: 1793600906 } } }).windows;
+    const primary = mainAs("primary"), secondary = mainAs("secondary");
+    expect(primary[0]).toMatchObject({ id: "codex:primary", label: "codex · primary", windowDurationMins: null, scope: "account" });
+    expect(ids(primary)).toEqual(["codex"]);
+    expect(ids(secondary)).toEqual(["codex"]);
+    expect(idByLabel(primary)).toEqual({ "codex · primary": "codex" });
+  });
+  it("names the spend windows, which report no duration, after their labels", () => {
+    const spendOnly = parseClaudeUsage({ five_hour: null, extra_usage: { is_enabled: true, monthly_limit: 50000, used_credits: 1250, utilization: 2.5, currency: "USD", decimal_places: 2 } }).windows;
+    const credits = parseCodexUsage({ accountId: "a", rateLimits: { limitId: "codex", individualLimit: { limit: "5000", used: "1234.56", remainingPercent: 75, resetsAt: 1798761600 } } }).windows;
+    expect(ids(spendOnly)).toEqual(["monthly-spend"]);
+    expect(ids(credits)).toEqual(["codex-monthly-credits"]);
+  });
+  it("numbers windows that name the same quota and period, so ids stay unique", () => {
+    const both = parseCodexUsage({ rateLimits: { limitId: "codex", primary: { usedPercent: 1 }, secondary: { usedPercent: 2 } } }).windows;
+    expect(ids(both)).toEqual(["codex", "codex:2"]);
+    expect(ids([...claude(scoped("Opus", 10)), ...claude(scoped("Opus", 30))].filter(w => w.scope === "model"))).toEqual(["weekly-opus-claude-code:weekly", "weekly-opus-claude-code:weekly:2"]);
+  });
+  it("falls back to a hash for a label with nothing to slug", () => {
+    const [id] = ids([{ ...sonnet, label: "日本語" }]);
+    expect(id).toMatch(/^quota-[0-9a-f]{12}:weekly$/);
+  });
+  it("does not carry the collector's window ID into any id", () => {
+    const all = [...claude(scoped("Opus", 10)), ...codex("primary", 300), spend, sonnet];
+    for (const id of ids(all)) expect(id).toMatch(/^[A-Za-z0-9._:-]+$/);
+    expect(ids(all).join(" ")).not.toMatch(/weekly_scoped|seven_day|extra_usage|primary|secondary/);
   });
 });
 

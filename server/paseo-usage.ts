@@ -47,12 +47,27 @@ export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: Us
   return [...found.values()];
 }
 
+// Without a reported duration the Codex collector labels a window by its response slot ("codex · primary"). A slot says where the window sat in the response, not which quota it is.
+const SLOT = / · (?:primary|secondary)$/;
+
+/**
+ * A window's quota name for Paseo's ids, which pinned windows are matched by. It comes from the label, which names the quota
+ * and (for model windows) its period. The collectors' window IDs do not: they are response positions ("weekly_scoped:0", "gpt-5.3-codex-spark:primary").
+ */
+function quotaName(label: string): string {
+  const slug = label.replace(SLOT, "").toLowerCase().replace(/[^a-z0-9._]+/g, "-").replace(/^-+|-+$/g, "");
+  // A label with no ASCII letters or digits has nothing to slug.
+  return slug || `quota-${hashAccountKey(label).slice(0, 12)}`;
+}
+
 function paseoWindow(window: UsageWindow): PaseoWindow {
   const model = window.scope === "model";
+  const name = quotaName(window.label);
   const mapped = windowFromReportedDuration({
     durationSeconds: window.windowDurationMins === null ? null : window.windowDurationMins * 60,
-    scope: model ? { id: window.id, label: window.label } : undefined,
-    unknown: { id: window.id, label: window.label, shortLabel: "" },
+    scope: model ? { id: name, label: window.label } : undefined,
+    // Paseo prefixes a model window's id with its scope, which already says everything the label does.
+    unknown: { id: model ? "window" : name, label: window.label, shortLabel: "" },
     utilizationPct: window.usedPercent,
     resetsAt: window.resetsAt,
     summary: window.scope === "account",
@@ -63,11 +78,21 @@ function paseoWindow(window: UsageWindow): PaseoWindow {
   return { ...rest, label: window.label };
 }
 
+/** Two readings that name the same quota and period cannot be told apart; numbering the later ones keeps ids unique, which is the only place order enters an id. */
+function withUniqueIds(windows: PaseoWindow[]): PaseoWindow[] {
+  const seen = new Map<string, number>();
+  return windows.map(window => {
+    const count = (seen.get(window.id) ?? 0) + 1;
+    seen.set(window.id, count);
+    return count === 1 ? window : { ...window, id: `${window.id}:${count}` };
+  });
+}
+
 export function usageReport(snapshot: UsageSnapshot | undefined): UsageReport {
   if (snapshot?.status === "needs_auth") return { status: "error", error: "Needs sign-in in Account Switcher." };
   if (!snapshot || snapshot.status === "unavailable") return { status: "error", error: "No usage data from the provider yet." };
   // A stale snapshot keeps the last good reading; the plugin's own view marks it, Paseo's has no place for that.
-  const windows = snapshot.windows.map(paseoWindow);
+  const windows = withUniqueIds(snapshot.windows.map(paseoWindow));
   const details = snapshot.windows.flatMap((window, index): UsageDetail[] => {
     const text = window.detail?.trim();
     const shown = windows[index];
