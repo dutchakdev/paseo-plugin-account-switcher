@@ -33,6 +33,10 @@ describe("/account arguments", () => {
     expect(resolveAccountArgument(state(accounts), "codex", "default"))
       .toEqual({ kind: "error", message: "No default Codex account is set. Choose one in Accounts." });
   });
+  it("lets an account named Default win over the keyword", () => {
+    const named = account("named-default", "Default");
+    expect(resolveAccountArgument(state([...accounts, named], { claude: null, codex: "second" }), "codex", "default")).toEqual({ kind: "account", account: named });
+  });
   it("refuses an account that is not signed in", () => {
     expect(resolveAccountArgument(state([account("w", "Waiting", "codex", { authStatus: "needs_auth" })]), "codex", "waiting"))
       .toEqual({ kind: "error", message: "“Waiting” needs sign-in. Check it in Accounts." });
@@ -64,7 +68,7 @@ describe("/account on an agent", () => {
     const { value, calls } = deps();
     await expect(runAccountCommand("codex", "agent", "second", value)).resolves.toBe("applied");
     expect(calls.prepare).toHaveBeenCalledWith("second");
-    expect(calls.apply).toHaveBeenCalledOnce();
+    expect(calls.apply).toHaveBeenCalledExactlyOnceWith("second");
   });
   it("leaves the selection pending in the switcher while the agent is busy", async () => {
     const { value, calls } = deps({ ...idle, status: "running" });

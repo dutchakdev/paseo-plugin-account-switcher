@@ -4,10 +4,15 @@
 
 ### Added
 
-- The chat records the account in a quiet line: after an applied switch (*Account switched from Work to Second*), and when a new agent did not start on the default, with the reason. The lines do not survive a daemon restart.
-- `/account name` switches a chat's account from the message field, and `/account default` returns it to the provider's default. Names match without regard to case, and a unique beginning is enough. The switch applies at once when the agent is idle; while it responds, or when the account's plan lacks the agent's model, the switcher opens with the account selected. `/account` alone opens the switcher.
+- The chat records the account in a quiet line: after an applied switch (*Account switched from Work to Second*), and when a new agent did not start on the default, with the reason. The lines are best effort and do not survive a daemon restart.
+- `/account name` switches a chat's account from the message field, and `/account default` returns it to the provider's default. Names match without regard to case, and a unique beginning is enough; an account named Default wins over the keyword. The switch applies at once when the agent is idle; while it responds, or when the account's plan lacks the agent's model, the switcher opens with the account selected. `/account` alone opens the switcher.
 - The Command Center (⌘K) offers **Make “name” the Claude default** or **the Codex default** for every signed-in account that is not already the default.
-- A new agent no longer starts on a default account that would fail. When the last limits show the default is used up, its plan lacks the Codex model chosen for the agent, or it needs sign-in, the agent starts on the signed-in account of the same provider with the most room. With every account used up, it starts on the default as before. A choice made for the chat still wins.
+- A new agent no longer starts on a default account that would fail. When the latest readings show the default has used up an account-wide limit that resets later, Codex reports that ordinary usage is not allowed, its plan lacks the Codex model chosen for the agent, or the default needs sign-in, the agent starts on the signed-in account of the same provider with the largest percentage left. Limits of a single model and extra paid usage do not count. With every account ruled out, it starts on the default as before. A choice made for the chat still wins.
+- Limit windows record whether they stop the whole account, one model, or extra paid usage, and Codex readings keep the provider's `ordinaryUsageAllowed` verdict.
+
+### Fixed
+
+- Apply and `/account` apply only the account the user selected. If another client changed the selection in the meantime, the switch is refused instead of applying that other account.
 
 ## 0.6.0 - 2026-10-26
 

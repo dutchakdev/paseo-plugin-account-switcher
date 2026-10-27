@@ -1,0 +1,61 @@
+{
+  "ordinaryUsageAllowed": true,
+  "rateLimits": {
+    "limitId": "codex",
+    "limitName": null,
+    "normalModelSlug": null,
+    "primary": {
+      "usedPercent": 31,
+      "windowDurationMins": 10080,
+      "resetsAt": 1793600906
+    },
+    "secondary": null,
+    "credits": {
+      "hasCredits": true,
+      "unlimited": false,
+      "balance": "52745.6283035000"
+    },
+    "individualLimit": null,
+    "spendControlReached": false,
+    "planType": "pro",
+    "rateLimitReachedType": null
+  },
+  "rateLimitsByLimitId": {
+    "codex": {
+      "limitId": "codex",
+      "limitName": null,
+      "normalModelSlug": null,
+      "primary": {
+        "usedPercent": 31,
+        "windowDurationMins": 10080,
+        "resetsAt": 1793600906
+      },
+      "secondary": null,
+      "credits": {
+        "hasCredits": true,
+        "unlimited": false,
+        "balance": "52745.6283035000"
+      },
+      "individualLimit": null,
+      "spendControlReached": false,
+      "planType": "pro",
+      "rateLimitReachedType": null
+    }
+  },
+  "rateLimitResetCredits": {
+    "availableCount": 1,
+    "credits": [
+      {
+        "id": "fixture-credit",
+        "resetType": "codexRateLimits",
+        "status": "available",
+        "grantedAt": 1791416065,
+        "expiresAt": 1794008065,
+        "title": "Full reset",
+        "description": "Thanks for using Codex! You've been granted one free rate limit reset."
+      }
+    ]
+  },
+  "accountId": "fixture-account",
+  "rateLimitUpsell": null
+}

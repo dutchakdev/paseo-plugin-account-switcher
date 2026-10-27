@@ -12,7 +12,8 @@ export function resolveAccountArgument(state: AccountState, provider: Provider, 
   if (!query) return { kind: "open" };
   const accounts = state.accounts.filter((account) => account.provider === provider);
   let account: Account | undefined;
-  if (query.toLowerCase() === "default") {
+  // An account that is literally named "Default" wins over the keyword.
+  if (query.toLowerCase() === "default" && !accounts.some((item) => item.label.toLowerCase() === "default")) {
     account = accounts.find((item) => item.id === state.defaults[provider]);
     if (!account) return { kind: "error", message: `No default ${shortName[provider]} account is set. Choose one in Accounts.` };
   } else {
@@ -42,7 +43,7 @@ export type AccountCommandDependencies = {
   /** The agent's latest snapshot; null when it no longer exists. */
   agent(): Promise<Parameters<typeof idleForSwitch>[0] & Parameters<typeof agentModel>[0]>;
   prepare(accountId: string): Promise<unknown>;
-  apply(): Promise<unknown>;
+  apply(accountId: string): Promise<unknown>;
   openSwitcher(): void;
 };
 
@@ -58,6 +59,6 @@ export async function runAccountCommand(provider: Provider | null, agentId: stri
   const [agent, usage] = await Promise.all([deps.agent(), deps.usage().catch(() => [])]);
   const risk = switchRisk({ label: target.account.label, models: usage.find((item) => item.accountId === target.account.id)?.models }, agentModel(agent));
   if (risk || !idleForSwitch(agent)) { deps.openSwitcher(); return "pending"; }
-  await deps.apply();
+  await deps.apply(target.account.id);
   return "applied";
 }

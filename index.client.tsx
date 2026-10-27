@@ -46,7 +46,7 @@ export default function contribute(client: PluginClientContext) {
         usage: async () => (await rpc(listUsage, {})).accounts,
         agent: async () => (await paseo.agents.ref(agent.id).refresh())?.agent ?? null,
         prepare: (accountId) => rpc(prepareSwitch, { agentId: agent.id, accountId }),
-        apply: () => rpc(applySwitch, { agentId: agent.id }),
+        apply: (accountId) => rpc(applySwitch, { agentId: agent.id, accountId }),
         openSwitcher: () => runtime.openSwitcher(target),
       }).finally(runtime.refresh);
     } });

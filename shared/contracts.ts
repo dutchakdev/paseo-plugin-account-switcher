@@ -42,6 +42,8 @@ export const UsageWindowSchema = z.object({
   windowDurationMins: z.number().nullable(), resetsAt: z.string().nullable(),
   // Provider-reported amounts behind the percentage, such as "3,765 of 5,000 credits left".
   detail: z.string().nullable().optional(),
+  // What a full window stops: every request of the account, one model's requests, or extra paid usage.
+  scope: z.enum(["account", "model", "spend"]).optional(),
 });
 export type UsageWindow = z.infer<typeof UsageWindowSchema>;
 export const UsageSnapshotSchema = z.object({
@@ -50,6 +52,8 @@ export const UsageSnapshotSchema = z.object({
   plan: z.string().nullable(), windows: z.array(UsageWindowSchema),
   // Model IDs the account's plan offers; null or absent when the provider does not list them.
   models: z.array(z.string()).nullable().optional(),
+  // The provider's own verdict that ordinary usage is allowed (Codex `ordinaryUsageAllowed`); null when not reported.
+  usageAllowed: z.boolean().nullable().optional(),
   fetchedAt: z.string().nullable(), checkedAt: z.string(), nextRetryAt: z.string().nullable(),
   error: z.string().nullable(),
 });
@@ -67,7 +71,8 @@ export const submitLoginCode = defineRpc({ name: "auth.submit-code", input: Acco
 export const checkLogin = defineRpc({ name: "auth.check", input: AccountId, output: AccountSchema });
 export const cancelLogin = defineRpc({ name: "auth.cancel", input: AccountId.extend({ sessionId: z.string().min(1).optional() }), output: AccountSchema });
 export const prepareSwitch = defineRpc({ name: "switch.prepare", input: z.object({ agentId: z.string().min(1), accountId: z.string().nullable() }), output: BindingSchema });
-export const applySwitch = defineRpc({ name: "switch.apply", input: z.object({ agentId: z.string().min(1) }), output: BindingSchema });
+// `accountId`: the selection the caller saw; the switch is refused when another client changed it since.
+export const applySwitch = defineRpc({ name: "switch.apply", input: z.object({ agentId: z.string().min(1), accountId: z.string().min(1).optional() }), output: BindingSchema });
 export const setIntegration = defineRpc({ name: "integration.set", input: z.object({ enabled: z.boolean() }), output: StateSchema });
 export const listUsage = defineRpc({ name: "usage.list", input: z.object({ visible: z.boolean().optional() }), output: z.object({ accounts: z.array(UsageSnapshotSchema) }) });
 export const refreshUsage = defineRpc({ name: "usage.refresh", input: z.object({ accountId: z.string().optional() }), output: z.object({ accounts: z.array(UsageSnapshotSchema) }) });

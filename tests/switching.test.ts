@@ -207,7 +207,7 @@ it("does not bind an unprobed replacement default chosen during the first accoun
 describe("a new agent's account when the default would fail",()=>{
  const later=new Date(Date.now()+3_600_000).toISOString();
  const snapshot=(accountId:string,usedPercent:number,models?:string[])=>({accountId,provider:"codex" as const,status:"ok" as const,plan:null,
-  windows:[{id:"primary",label:"5 hours",usedPercent,windowDurationMins:300,resetsAt:later}],models,fetchedAt:later,checkedAt:later,nextRetryAt:null,error:null});
+  windows:[{id:"primary",label:"5 hours",usedPercent,windowDurationMins:300,resetsAt:later,scope:"account" as const}],models,fetchedAt:later,checkedAt:later,nextRetryAt:null,error:null});
  async function pool(){
   const {store,target}=await fixture(),spare=await store.add("codex","Spare");
   await store.change(r=>{r.defaults.codex=target.id;for(const a of r.accounts)a.authStatus="ready";});
@@ -239,10 +239,26 @@ describe("a new agent's account when the default would fail",()=>{
   expect(await launched(store,"signed-out-default")).not.toBe(target.id);
   expect(checkAccount.mock.calls[0][0]).toBe(target.id);
  });
+ it("does not call a default that could not be checked one that needs sign-in",async()=>{
+  const {store,target}=await pool();
+  const checkAccount=vi.fn(async(id:string)=>({authStatus:id===target.id?"error":"ready"}));
+  await expect(makeService(store,{checkAccount}).bindNewAgent("unchecked-default","codex")).resolves.toMatchObject({reason:"unverified"});
+ });
  it("falls back to the default when every account is used up, as before",async()=>{
   const {store,target,spare}=await pool();
   const service=makeService(store,{usage:async()=>[snapshot(target.id,100),snapshot("system-codex",100),snapshot(spare.id,100)]});
   await service.bindNewAgent("all-out","codex");
   expect(await launched(store,"all-out")).toBe(target.id);
  });
+});
+
+it("applies only the account the caller selected when another client changed the selection meanwhile",async()=>{
+ const f=await fixture();f.setBusy(false);
+ const other=await f.store.add("codex","Personal");
+ await f.service.prepare("raced",f.target.id);
+ await f.service.prepare("raced",other.id);
+ await expect(f.service.apply("raced",f.target.id)).rejects.toThrow(/selection changed/);
+ expect(f.reloads()).toBe(0);
+ expect((await f.store.read()).bindings.find(b=>b.agentId==="raced")).toMatchObject({pendingAccountId:other.id,status:"ready"});
+ await expect(f.service.apply("raced",other.id)).resolves.toMatchObject({currentAccountId:other.id});
 });
