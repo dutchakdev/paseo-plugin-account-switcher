@@ -7,6 +7,7 @@ Limits cover every window the provider reports, such as 5-hour and weekly use, w
 - Each account you add gets its own credential profile. Settings, skills, and session history stay shared with your existing CLI setup, so a profile is not a sandbox.
 - **Enable** in Accounts points Paseo's Claude and Codex commands at the plugin's launchers, which start the official CLI under the agent's account. **Disable** restores the original commands; use it before removing the plugin.
 - A new agent starts on its provider's default account. When the last limits show the default is used up, its plan lacks the agent's Codex model, or it needs sign-in, the agent starts on the signed-in account with the most room instead. With every account used up, it stays on the default.
+- `/account name` in the message field switches the chat's account, or `/account default` its provider's default: at once when the agent is idle, otherwise in the switcher for **Apply**. The Command Center offers **Make “name” the default** for each signed-in account.
 - The account chip in the composer opens the switcher for that chat. Your selection applies only when you choose **Apply** while the agent is idle with no pending permission request, and Paseo reloads the agent with its session intact. If the switch fails, the plugin tries to restore the previous account.
 
 ## Setup
