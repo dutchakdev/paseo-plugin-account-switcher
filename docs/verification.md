@@ -96,7 +96,7 @@ local and SSH-based results.
 
 - `npm run check` on macOS (arm64) with Node.js **22.23.0**, TypeScript **7.0.2**
   and Vitest **5.0.5** passed: the launcher build (522,832 bytes, three
-  third-party licenses), typecheck with no errors, and **463/463 tests** in 38
+  third-party licenses), typecheck with no errors, and **468/468 tests** in 38
   files. `node scripts/release.mjs check` passed.
 - Paseo facts behind the fixes, read in the Paseo source at tags v0.11.0 and
   v0.13.0: the Claude provider's `appendResultEvents` turns every result of
@@ -104,8 +104,9 @@ local and SSH-based results.
   included; `finalizeForegroundTurn` sets an agent with a terminal error to
   `error` before the stream event that becomes `agent.turn_ended` is dispatched.
 - New tests: a completed Claude turn checked only when the cached reading shows
-  the account used up (no refresh otherwise), Codex completed turns still
-  ignored, an automatic switch after a completed Claude turn without
+  the account used up (no refresh otherwise) and not while Claude's extra usage
+  (the parser's `extra_usage` spend window) has room, one row per exhaustion
+  rather than per turn, Codex completed turns still ignored, an automatic switch after a completed Claude turn without
   **Continue.**, the cached-reading prefilter and the stale and
   `usageAllowed: false` cases of `failoverDecision` (`tests/failover.test.ts`,
   `tests/server-hooks.test.ts`); an unconfirmed launch confirmed by its receipt
@@ -113,7 +114,7 @@ local and SSH-based results.
   test runs the real controller), with no row and a clear refusal without one
   (`tests/controller.test.ts`, `tests/server-hooks.test.ts`); stale offers,
   `switchTo` putting the selection back after a refusal, and `SwitchRefusal`
-  against other errors (`tests/switching.test.ts`, `tests/server-hooks.test.ts`,
+  against other errors, also for `failover.apply`'s checks before the switch (`tests/switching.test.ts`, `tests/server-hooks.test.ts`,
   `tests/ui-failover-row.test.ts`, `tests/failover-row.test.ts`). They use
   stand-in daemon and app objects; no Paseo daemon or app was started.
 - Not checked live: a Claude turn on a really used-up account, and an agent

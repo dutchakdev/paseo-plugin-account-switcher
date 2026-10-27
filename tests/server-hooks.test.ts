@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UsageSnapshot } from "../shared/contracts";
 import { SwitchRefusal } from "../server/switching";
+import { parseClaudeUsage } from "../server/usage/parsers";
 
 const controller = vi.hoisted(() => {
   const bindNewAgent = vi.fn(async (..._args: unknown[]): Promise<unknown> => undefined);
@@ -226,7 +227,16 @@ describe("a turn that fails on a used-up account", () => {
     controller.registry.bindings = [{ agentId: "agent-1", provider: "claude", currentAccountId: "claude-work", launchAccountId: "claude-work" }];
   };
   // How Paseo reports a Claude turn that hit its limit: the SDK's error result has subtype "success".
-  const claudeCompleted = () => ended({ kind: "completed" }, "agent-1", "claude");
+  const claudeCompleted = (turnId = "turn-7") => ({ ...ended({ kind: "completed" }, "agent-1", "claude"), turnId });
+  // A Claude reading as the plugin's parser builds it from the usage endpoint: the 5-hour window full, and, when given,
+  // paid extra usage at `spent` percent of its monthly limit.
+  const claudeReading = (accountId: string, spent?: number, fiveHourReset = resetsAt): UsageSnapshot => ({
+    accountId, provider: "claude", status: "ok", plan: null, fetchedAt: null, checkedAt: new Date().toISOString(), nextRetryAt: null, error: null,
+    windows: parseClaudeUsage({
+      five_hour: { utilization: 100, resets_at: fiveHourReset }, seven_day: { utilization: 20, resets_at: fiveHourReset },
+      ...(spent === undefined ? {} : { extra_usage: { is_enabled: true, monthly_limit: 50000, used_credits: spent * 500, utilization: spent, currency: "USD", decimal_places: 2 } }),
+    }).windows,
+  });
   const rowId = "account-failover-agent-1-turn-7";
   const rows = (appended: { item: any }[]) => appended.filter(entry => entry.item.kind === "account-failover").map(entry => entry.item);
   const busy = "Wait for the agent to finish its response.";
@@ -306,6 +316,45 @@ describe("a turn that fails on a used-up account", () => {
     await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
     expect(controller.refresh).toHaveBeenCalledWith("claude-work");
     expect(appended).toEqual([]);
+  });
+  // With extra usage on, Claude keeps answering past a full 5-hour window, paid from the monthly spend allowance.
+  it("leaves a completed Claude turn alone while the account's extra usage has room", async () => {
+    onClaude();
+    expect(claudeReading("claude-work", 40).windows.map(window => [window.id, window.scope, window.usedPercent])).toEqual([["five_hour", "account", 100], ["seven_day", "account", 20], ["extra_usage", "spend", 40]]);
+    cached(claudeReading("claude-work", 40));
+    readings(claudeReading("claude-work", 40), reading("claude-second", 10, "claude"));
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
+    expect(controller.refresh).not.toHaveBeenCalled();
+    expect(appended).toEqual([]);
+    // Extra usage turned on since the last reading: the fresh reading says so.
+    cached(claudeReading("claude-work"));
+    await on.get("agent.turn_ended")!(claudeCompleted("turn-8"), { paseo });
+    expect(controller.refresh).toHaveBeenCalledWith("claude-work");
+    expect(appended).toEqual([]);
+  });
+  it("offers the switch on a completed Claude turn once the extra usage is spent too", async () => {
+    onClaude();
+    cached(claudeReading("claude-work", 100));
+    readings(claudeReading("claude-work", 100), reading("claude-second", 10, "claude"));
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
+    expect(rows(appended).map(item => item.data)).toEqual([expect.objectContaining({ state: "offered", from: "Claude Work", toId: "claude-second", resetsAt })]);
+  });
+  it("offers a used-up account once per exhaustion, not after every completed turn", async () => {
+    onClaude();
+    cached(claudeReading("claude-work"));
+    readings(claudeReading("claude-work"), reading("claude-second", 10, "claude"));
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(claudeCompleted("turn-7"), { paseo });
+    await on.get("agent.turn_ended")!(claudeCompleted("turn-8"), { paseo });
+    expect(rows(appended).map(item => [item.id, item.data.state])).toEqual([[rowId, "offered"]]);
+    // The next time the account runs out, with a later reset, is offered again.
+    const later = new Date(Date.parse(resetsAt) + 5 * 3_600_000).toISOString();
+    cached(claudeReading("claude-work", undefined, later));
+    readings(claudeReading("claude-work", undefined, later), reading("claude-second", 10, "claude"));
+    await on.get("agent.turn_ended")!(claudeCompleted("turn-9"), { paseo });
+    expect(rows(appended).map(item => [item.id, item.data.resetsAt])).toEqual([[rowId, resetsAt], ["account-failover-agent-1-turn-9", later]]);
   });
   it("checks a failed Claude turn as a failed Codex one, without waiting for the last reading", async () => {
     onClaude();
@@ -510,6 +559,23 @@ describe("a turn that fails on a used-up account", () => {
       expect(JSON.stringify(appended)).not.toContain("/Users/me");
       expect(error).toHaveBeenCalledWith(expect.stringContaining("EACCES: permission denied, open '/Users/me/.paseo/account-switcher/registry.json'"));
       expect(sent).toEqual([]);
+    } finally { error.mockRestore(); }
+  });
+  it("answers the button with the generic sentence when checking the offer fails unexpectedly", async () => {
+    const raw = new Error("EACCES: permission denied, open '/Users/me/.paseo/account-switcher/registry.json'");
+    const { handlers } = startAll(), { appended, paseo } = paseoRecorder(), error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      controller.read.mockRejectedValueOnce(raw);
+      await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId, fromId: "work" }, { paseo })).rejects.toThrow(/^The switch failed; the plugin log has details\.$/);
+      controller.accountOf.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'bindings')"));
+      await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId, fromId: "work" }, { paseo })).rejects.toThrow(/^The switch failed; the plugin log has details\.$/);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("EACCES: permission denied, open '/Users/me/.paseo/account-switcher/registry.json'"));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot read properties of undefined (reading 'bindings')"));
+      expect(controller.switchTo).not.toHaveBeenCalled();
+      expect(appended).toEqual([]);
+      // The plugin's own answers still reach the user as they are.
+      await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "missing", rowId }, { paseo })).rejects.toThrow(/^Account not found\.$/);
+      await expect(handlers.get("failover.apply")!({ agentId: "agent-2", accountId: "second", rowId }, { paseo })).rejects.toThrow(/^The switch offer belongs to another agent\.$/);
     } finally { error.mockRestore(); }
   });
   it("keeps an unexpected failure of an automatic switch out of the row too", async () => {

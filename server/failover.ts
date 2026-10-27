@@ -24,11 +24,18 @@ export function failoverDecision(input: { currentId: string; accounts: readonly 
   return toId ? { kind: "offer", fromId: currentId, toId, resetsAt } : { kind: "none", fromId: currentId, resetsAt };
 }
 
+/** Whether the account's paid extra usage still has room: a spend window under 100%. Claude then keeps answering past
+ * a full 5-hour window, so a completed turn on such an account did not run out. */
+export function extraUsageLeft(snapshot: UsageSnapshot | undefined): boolean {
+  return !!snapshot?.windows.some(window => window.scope === "spend" && window.usedPercent !== null && window.usedPercent < 100);
+}
+
 /** Whether the last reading of an account, read from the cache, gives reason to read it again after a turn that completed:
- * a full account-wide window until a later reset, or the provider's "not allowed" however old. Claude reports a turn its
- * limit stopped as completed, so this keeps every ordinary completed turn from costing a provider request. */
+ * a full account-wide window until a later reset, or the provider's "not allowed" however old, unless paid extra usage
+ * still has room. Claude reports a turn its limit stopped as completed, so this keeps every ordinary completed turn from
+ * costing a provider request. */
 export function mayBeUsedUp(cached: UsageSnapshot | undefined, now: number): boolean {
-  return !!cached && (cached.usageAllowed === false || cached.windows.some(window => fullUntilReset(window, now)));
+  return !!cached && !extraUsageLeft(cached) && (cached.usageAllowed === false || cached.windows.some(window => fullUntilReset(window, now)));
 }
 
 const HOUR = 3_600_000, MAX_PER_HOUR = 3;

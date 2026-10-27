@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AutoFailoverGuard, failoverDecision, mayBeUsedUp } from "../server/failover";
+import { AutoFailoverGuard, extraUsageLeft, failoverDecision, mayBeUsedUp } from "../server/failover";
 import type { UsageSnapshot, UsageWindow } from "../shared/contracts";
 
 const now = Date.parse("2026-10-27T12:00:00Z");
@@ -102,6 +102,15 @@ describe("whether a completed turn's account is worth reading again", () => {
   it("is when the last reading says usage is not allowed, however old", () => {
     expect(mayBeUsedUp(snapshot("current", [window(10)], { usageAllowed: false }), now)).toBe(true);
     expect(mayBeUsedUp(snapshot("current", [], { status: "stale", usageAllowed: false }), now)).toBe(true);
+  });
+  // Claude's extra usage pays for requests past a full 5-hour window, so turns keep completing.
+  it("is not while the account's paid extra usage still has room", () => {
+    expect(mayBeUsedUp(snapshot("current", [window(100), window(40, null, "spend")]), now)).toBe(false);
+    expect(mayBeUsedUp(snapshot("current", [window(100), window(100, null, "spend")]), now)).toBe(true);
+    expect(mayBeUsedUp(snapshot("current", [window(100), window(null, null, "spend")]), now)).toBe(true);
+    expect(extraUsageLeft(snapshot("current", [window(100), window(99, null, "spend")]))).toBe(true);
+    expect(extraUsageLeft(snapshot("current", [window(100), window(100, later, "model")]))).toBe(false);
+    expect(extraUsageLeft(undefined)).toBe(false);
   });
   it("is not otherwise, so an ordinary turn costs no provider request", () => {
     expect(mayBeUsedUp(undefined, now)).toBe(false);                                                  // never read

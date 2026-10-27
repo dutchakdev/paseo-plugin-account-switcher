@@ -85,19 +85,26 @@ Trigger: `agent.turn_ended` for a Claude or Codex agent with
 corrected fact above). A completed Claude turn first passes a cheap prefilter
 on the cached reading of the agent's account: an account-wide window at 100%
 or more with a reset still ahead, or `usageAllowed === false`. Without that,
-it ends with no provider request. Evidence, not text: refresh the agent's
+it ends with no provider request. It also ends, before and after the refresh,
+while the reading has a spend-scope window with room left (`usedPercent`
+under 100): with extra usage on, Claude keeps answering past a full 5-hour
+window, paid from the monthly allowance. Failed turns and `blocker()` do not
+look at spend windows. Evidence, not text: refresh the agent's
 current account and ask `selection.ts` for its blocker. Only `"exhausted"`
 continues; any other failure is left alone. Completed Codex turns and
 canceled turns are ignored.
 
 The agent's account is its binding's confirmed account, or, for a launch not
-confirmed yet, the launch account once its receipt confirms it with the same
-check the Accounts list makes; an agent without a binding is on its
-provider's Current CLI account. Nothing confirmed, no row.
+confirmed yet, the launch account once its receipt confirms it. That is the
+Accounts list's receipt check, except that failover also accepts an agent in
+`error`, the status Paseo sets after a failed turn before the hook runs; the
+launcher wrote the receipt when it started the CLI. An agent without a
+binding is on its provider's Current CLI account. Nothing confirmed, no row.
 
 Candidate: `launchOrder` over the provider's other signed-in accounts that are
 not exhausted and offer the agent's model (Codex). The plugin appends one chat
-row per failed turn (`timeline.append`, kind `account-failover`, version 1):
+row per exhaustion, that is per agent, account and reset time while the plugin
+runs, not one per turn (`timeline.append`, kind `account-failover`, version 1):
 
 - with a candidate: "Work's limit is used up until 18:00." and a button
   **Switch to Second and continue**;
@@ -116,7 +123,7 @@ Automatic switching: a per-provider setting in Accounts, off by default. When
 on, the same flow runs without the click and the row says it switched
 automatically. After a completed Claude turn it does not send "Continue.",
 since the turn may really have finished; the row adds "Your next message runs
-on Second.". After a failed turn it sends "Continue." as the button does. Guard: at most one automatic switch per failed turn and three per
+on Second.". After a failed turn it sends "Continue." as the button does. Guard: at most one automatic switch per turn and three per
 agent per hour; never back to an account it left within that hour.
 
 ## D. Screens

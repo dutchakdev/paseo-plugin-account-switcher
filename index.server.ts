@@ -1,7 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import * as rpc from "./shared/contracts";
 import { AccountController } from "./server/controller";
-import { AutoFailoverGuard, failoverDecision, mayBeUsedUp } from "./server/failover";
+import { AutoFailoverGuard, extraUsageLeft, failoverDecision, mayBeUsedUp } from "./server/failover";
 import type { PaseoApi } from "./server/paseo-api";
 import { registerPaseoUsage } from "./server/paseo-usage";
 import { profileEnv } from "./server/session-env";
@@ -60,6 +60,9 @@ export default function contribute(server:PluginServerContext){
   return binding;
  });
  const guard=new AutoFailoverGuard();
+ // Offers already in the chat, by agent, account and reset: one exhaustion gets one offered or "none" row, not one per
+ // turn. A later exhaustion, with another reset or account, is offered again. In memory, like the guard.
+ const offered=new Set<string>();
  // Agents with a failover switch under way, from its "switching" row until the row tells the outcome.
  const switching=new Set<string>();
  // Applies a failover row's switch the way `/account` does: the same service checks the account, that the agent is idle
@@ -91,22 +94,33 @@ export default function contribute(server:PluginServerContext){
  };
  server.handle(rpc.setAutoFailover,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.autoFailover[provider]=enabled;});return{};});
  server.handle(rpc.applyFailover,async({agentId,accountId,rowId,fromId},{paseo})=>{
-  // Only this agent's own failover row may be rewritten with the outcome.
-  if(!rowId.startsWith(`${FAILOVER_KIND}-${agentId}-`))throw new Error("The switch offer belongs to another agent.");
-  // A switch under way keeps its row; checking first also keeps the stale-offer check below from rewriting it.
-  if(switching.has(agentId))throw new SwitchRefusal("An account switch is already in progress.");
-  await controller.ready;
-  const state=await controller.store.read(),target=state.accounts.find(a=>a.id===accountId);
-  if(!target)throw new Error("Account not found.");
-  // Named at the click: the account the agent leaves now, with a launch not confirmed yet confirmed by its receipt.
-  const currentId=await controller.accountOf(paseo,agentId,target.provider),from=labelOf(state,currentId);
-  if(!currentId||!from)throw new Error("This agent's account is not confirmed yet. Choose an account in the account switcher instead.");
-  const row:FailoverRow={rowId,state:"offered",from,fromId:currentId,to:target.label,toId:target.id,resetsAt:null,error:null};
-  // An offer made before the agent moved: switching now would leave an account the row never named.
-  const stale=currentId===target.id?`The agent already runs on ${target.label}.`:fromId&&fromId!==currentId?`This offer is out of date: the agent now runs on ${from}.`:null;
-  if(stale){await appendFailoverRow(paseo,agentId,{...row,state:"failed",error:stale});throw new Error(stale);}
-  try{await switchOver(paseo,agentId,row,target.id,"switched");}
-  catch(error){throw error instanceof SwitchRefusal?error:new Error(SWITCH_FAILED);}
+  // Only refusals, written for the user, reach the client as they are; any other error may carry paths or internals.
+  // switchOver logs its own failures; one before it is logged here.
+  const shown=(error:unknown,logged:boolean)=>{
+   if(error instanceof SwitchRefusal)return error;
+   if(!logged)console.error(`Could not check the switch offer for agent ${agentId}: ${reason(error)}`);
+   return new Error(SWITCH_FAILED);
+  };
+  let row:FailoverRow,toId:string;
+  try{
+   // Only this agent's own failover row may be rewritten with the outcome.
+   if(!rowId.startsWith(`${FAILOVER_KIND}-${agentId}-`))throw new SwitchRefusal("The switch offer belongs to another agent.");
+   // A switch under way keeps its row; checking first also keeps the stale-offer check below from rewriting it.
+   if(switching.has(agentId))throw new SwitchRefusal("An account switch is already in progress.");
+   await controller.ready;
+   const state=await controller.store.read(),target=state.accounts.find(a=>a.id===accountId);
+   if(!target)throw new SwitchRefusal("Account not found.");
+   // Named at the click: the account the agent leaves now, with a launch not confirmed yet confirmed by its receipt.
+   const currentId=await controller.accountOf(paseo,agentId,target.provider,state),from=labelOf(state,currentId);
+   if(!currentId||!from)throw new SwitchRefusal("This agent's account is not confirmed yet. Choose an account in the account switcher instead.");
+   toId=target.id;
+   row={rowId,state:"offered",from,fromId:currentId,to:target.label,toId,resetsAt:null,error:null};
+   // An offer made before the agent moved: switching now would leave an account the row never named.
+   const stale=currentId===target.id?`The agent already runs on ${target.label}.`:fromId&&fromId!==currentId?`This offer is out of date: the agent now runs on ${from}.`:null;
+   if(stale){await appendFailoverRow(paseo,agentId,{...row,state:"failed",error:stale});throw new SwitchRefusal(stale);}
+  }catch(error){throw shown(error,false);}
+  try{await switchOver(paseo,agentId,row,toId,"switched");}
+  catch(error){throw shown(error,true);}
   return{};
  });
  server.handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
@@ -143,9 +157,10 @@ export default function contribute(server:PluginServerContext){
   await controller.observeAgentRegistration(agent.id);
  });
  // Paseo does not say why a turn failed. The evidence is the plugin's own reading of the agent's account, taken again now:
- // a used-up account gets one row per failed turn, any other failure is left alone.
+ // a used-up account gets a row, once per exhaustion, and any other failure is left alone.
  // Claude reports a turn its limit stopped as completed (the SDK's error result has subtype "success"), Codex as failed.
- // A completed Claude turn is read again only when the last reading already shows the account used up.
+ // A completed Claude turn is read again only when the last reading already shows the account used up, and not while
+ // its paid extra usage has room: Claude then keeps answering past a full 5-hour window.
  const removeTurnEnded=server.on("agent.turn_ended",async({agent,turnId,outcome},{paseo})=>{
   const provider=agent.provider;
   if(provider!=="claude"&&provider!=="codex")return;
@@ -153,7 +168,7 @@ export default function contribute(server:PluginServerContext){
   if(outcome.kind!=="failed"&&!completed)return;
   const rowId=`${FAILOVER_KIND}-${agent.id}-${turnId??Date.now()}`;
   // A switch under way, or the automatic one this turn already had, owns the agent's row: a repeated or concurrent
-  // report of a failed turn adds nothing, so it can neither roll that row back nor start a second switch.
+  // report of the turn adds nothing, so it can neither roll that row back nor start a second switch.
   const settled=(state:Registry)=>switching.has(agent.id)||guard.hasTurn(agent.id,rowId,Date.now())||state.bindings.some(b=>b.agentId===agent.id&&b.status==="switching");
   try{
    await controller.ready;
@@ -161,12 +176,13 @@ export default function contribute(server:PluginServerContext){
    // Without that provider's launcher the CLI runs on the system login, so a switch could not take effect.
    if(!state.integration.enabled||!state.integration.providers.includes(provider)||settled(state))return;
    // An agent started with no app open may have a launch nothing has confirmed yet; its receipt confirms it now.
-   const fromId=await controller.accountOf(paseo,agent.id,provider),from=labelOf(state,fromId);
+   const fromId=await controller.accountOf(paseo,agent.id,provider,state),from=labelOf(state,fromId);
    if(!fromId||!from)return;
    // The cache costs no provider request, so an ordinary completed turn ends here.
    if(completed&&!mayBeUsedUp((await controller.usage.list()).find(item=>item.accountId===fromId),Date.now()))return;
    // A full window read earlier still counts until its reset, so the account is read again before deciding.
    const [usage,snapshot]=await Promise.all([controller.usage.refresh(fromId),paseo.agents.ref(agent.id).refresh().catch(()=>null)]);
+   if(completed&&extraUsageLeft(usage.find(item=>item.accountId===fromId)))return;
    // A switch may have started or finished during those reads; from here to the row nothing awaits.
    const latest=await controller.store.read();
    if(settled(latest)||boundAccount(latest,agent.id,provider)!==fromId)return;
@@ -184,6 +200,10 @@ export default function contribute(server:PluginServerContext){
     void switchOver(paseo,agent.id,completed?{...row,resumes:false}:row,row.toId,"auto").catch(error=>{if(error instanceof SwitchRefusal)console.error(`Could not switch agent ${agent.id} automatically: ${error.message}`);});
     return;
    }
+   // Recorded before the await, so a turn reported meanwhile finds it.
+   const key=JSON.stringify([agent.id,fromId,row.resetsAt]);
+   if(offered.has(key))return;
+   offered.add(key);
    await appendFailoverRow(paseo,agent.id,row);
   }catch(error){console.error(`Could not check whether agent ${agent.id} ran out of its account's limit: ${reason(error)}`);}
  });
