@@ -47,7 +47,22 @@ An agent binding records its confirmed current account separately from its pendi
 
 The launcher chooses the assigned profile and writes a startup receipt containing the matching account and launch token. The controller confirms the switch only after reload succeeds and the receipt matches. Failure triggers an attempt to restore the previous profile. A failed rollback or interrupted switch leaves the account unconfirmed instead of displaying an assumed account.
 
-A provider default is assigned during interactive agent creation. Its binding starts unconfirmed until startup is observed. Existing agents keep their bindings. Archived agents retain theirs for resume; cleanup of deleted agents requires a complete, successful agent listing.
+A provider default is assigned during interactive agent creation, unless the cached limits prove it would fail. The `agent.create` hook stores the requested model in a private environment variable; Paseo passes that environment to the same agent's first `agent.session_open`, which has the agent ID, binds the agent and removes the variable before the CLI starts.
+
+```mermaid
+flowchart TD
+  A[agent.session_open, reason create] --> B{default set?}
+  B -- no --> Z[no binding: the CLI's own sign-in]
+  B -- yes --> C[launchOrder: cached limits + model]
+  C --> D{default exhausted, or plan lacks the model?}
+  D -- no --> E[default first, then spares by room]
+  D -- yes --> F[spares by room, unknown last, default last]
+  E --> G[probe sign-in in order]
+  F --> G
+  G --> H[bind the first ready account]
+```
+
+Exhausted means a window at 100% whose reset time has not passed. Room is the percent left in the tightest window still in effect. Only signed-in accounts without a sign-in in progress are spares. Its binding starts unconfirmed until startup is observed. Existing agents keep their bindings. Archived agents retain theirs for resume; cleanup of deleted agents requires a complete, successful agent listing.
 
 Native reload preserves the native session ID, but does not offer an atomic idle-and-reload operation. Concurrent messages from another client remain a race that callers must avoid. Real switching, compaction, child sessions, and rewind require live acceptance beyond synthetic tests.
 

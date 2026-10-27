@@ -308,7 +308,7 @@ export class AccountController {
  switcher(paseo:PaseoApi):SwitchService {
   let service=this.switches.get(paseo);if(service)return service;
   const requireIntegration=async()=>{if(this.integrationChanging)throw new Error("An integration change is still in progress.");await reconcileIntegration(paseo,this.store);if(!(await this.store.read()).integration.enabled)throw new Error("Account integration is no longer active. Check its settings and enable it again.");};
-  service=new SwitchService({store:this.store,applying:this.applying,checkAccount:async id=>{await requireIntegration();return this.checkAccount(id);},inspect:async(id)=>{
+  service=new SwitchService({store:this.store,applying:this.applying,usage:()=>this.usage.list(),checkAccount:async id=>{await requireIntegration();return this.checkAccount(id);},inspect:async(id)=>{
    const result=await paseo.agents.ref(id).refresh();if(!result)throw new Error("Agent not found.");
    const a=result.agent;
    return{provider:a.provider,busy:a.status==="running"||a.status==="initializing"||!!a.activeTurn||a.pendingPermissions.length>0,archived:!!a.archivedAt};

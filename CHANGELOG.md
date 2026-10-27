@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A new agent no longer starts on a default account that would fail. When the last limits show the default is used up, its plan lacks the Codex model chosen for the agent, or it needs sign-in, the agent starts on the signed-in account of the same provider with the most room. With every account used up, it starts on the default as before. A choice made for the chat still wins.
+
 ## 0.6.0 - 2026-10-26
 
 ### Added

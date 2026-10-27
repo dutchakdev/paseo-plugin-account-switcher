@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,7 +62,8 @@ function makeService(store:AccountStore,overrides:Partial<Omit<SwitchDependencie
 
 it("waits for a receipt from a provider CLI that starts after reload returns",async()=>{
  const {store,target}=await fixture();let started:Promise<void>|undefined;
- const service=makeService(store,{reload:async id=>{started=new Promise(done=>setTimeout(done,150)).then(()=>writeReceipt(store,id));}});
+ // The receipt lands 150 ms after reload returns; the margin must survive a slow CI runner.
+ const service=makeService(store,{receiptTimeoutMs:3000,reload:async id=>{started=new Promise(done=>setTimeout(done,150)).then(()=>writeReceipt(store,id));}});
  await service.prepare("lazy-agent",target.id);
  expect(await service.apply("lazy-agent")).toMatchObject({currentAccountId:target.id,pendingAccountId:null,status:"ready"});
  await started;
@@ -201,4 +202,47 @@ it("does not bind an unprobed replacement default chosen during the first accoun
  await expect(service.bindNewAgent("racing-default","codex")).rejects.toThrow(/changed/);
  expect((await store.read()).bindings).toEqual([]);
  expect((await store.read()).defaults.codex).toBe(other.id);
+});
+
+describe("a new agent's account when the default would fail",()=>{
+ const later=new Date(Date.now()+3_600_000).toISOString();
+ const snapshot=(accountId:string,usedPercent:number,models?:string[])=>({accountId,provider:"codex" as const,status:"ok" as const,plan:null,
+  windows:[{id:"primary",label:"5 hours",usedPercent,windowDurationMins:300,resetsAt:later}],models,fetchedAt:later,checkedAt:later,nextRetryAt:null,error:null});
+ async function pool(){
+  const {store,target}=await fixture(),spare=await store.add("codex","Spare");
+  await store.change(r=>{r.defaults.codex=target.id;for(const a of r.accounts)a.authStatus="ready";});
+  return {store,target,spare};
+ }
+ const launched=async(store:AccountStore,agentId:string)=>(await store.read()).bindings.find(b=>b.agentId===agentId)?.launchAccountId;
+ it("starts on the account with the most room when the default's limit is used up",async()=>{
+  const {store,target,spare}=await pool();
+  const service=makeService(store,{usage:async()=>[snapshot(target.id,100),snapshot("system-codex",70),snapshot(spare.id,20)]});
+  await service.bindNewAgent("after-limit","codex");
+  expect(await launched(store,"after-limit")).toBe(spare.id);
+ });
+ it("starts on an account whose plan offers the agent's model",async()=>{
+  const {store,target,spare}=await pool();
+  const service=makeService(store,{usage:async()=>[snapshot(target.id,0,["gpt-6-luna"]),snapshot("system-codex",0,["gpt-6-luna"]),snapshot(spare.id,50,["gpt-6.1-sol"])]});
+  await service.bindNewAgent("paid-model","codex","gpt-6.1-sol");
+  expect(await launched(store,"paid-model")).toBe(spare.id);
+ });
+ it("keeps the default while nothing shows it would fail",async()=>{
+  const {store,target,spare}=await pool();
+  const service=makeService(store,{usage:async()=>[snapshot(target.id,90),snapshot(spare.id,0)]});
+  await service.bindNewAgent("healthy","codex","gpt-6.1-sol");
+  expect(await launched(store,"healthy")).toBe(target.id);
+ });
+ it("moves on to the next account when the default's sign-in probe fails",async()=>{
+  const {store,target}=await pool();
+  const checkAccount=vi.fn(async(id:string)=>({authStatus:id===target.id?"needs_auth":"ready"}));
+  await makeService(store,{checkAccount}).bindNewAgent("signed-out-default","codex");
+  expect(await launched(store,"signed-out-default")).not.toBe(target.id);
+  expect(checkAccount.mock.calls[0][0]).toBe(target.id);
+ });
+ it("falls back to the default when every account is used up, as before",async()=>{
+  const {store,target,spare}=await pool();
+  const service=makeService(store,{usage:async()=>[snapshot(target.id,100),snapshot("system-codex",100),snapshot(spare.id,100)]});
+  await service.bindNewAgent("all-out","codex");
+  expect(await launched(store,"all-out")).toBe(target.id);
+ });
 });
