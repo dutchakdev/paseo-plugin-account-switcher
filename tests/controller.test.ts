@@ -44,6 +44,7 @@ vi.mock("../server/usage/claude", () => ({ renewExpiredClaudeToken: mocks.renewE
 import { AccountController } from "../server/controller";
 import { AccountStore, accountFrom } from "../server/store";
 import { SwitchRefusal } from "../server/switching";
+import contribute from "../index.server";
 
 const roots: string[] = [];
 const controllers: AccountController[] = [];
@@ -382,6 +383,53 @@ describe("confirmation token lifecycle", () => {
     // Confirmed for good, as the app's polling would have done.
     expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: account.id, launchToken: null, registrationObserved: true });
     expect(await controller.accountOf(starting, "scheduled", "codex")).toBe(account.id);
+  });
+
+  // Paseo marks an agent "error" when a turn fails, before the plugin's turn_ended hook runs. The launcher writes the
+  // receipt when it starts the CLI, so a matching receipt still names the account the agent started on.
+  it("confirms a launch for failover after a failed turn left the agent in error, while the Accounts list still waits", async () => {
+    const { controller, account } = await fixture();
+    await controller.store.change(r => { r.integration.enabled = true; r.defaults.codex = account.id; });
+    await controller.switcher(paseo).bindNewAgent("failed-first", "codex");
+    const token = (await controller.store.read()).bindings[0].launchToken;
+    await mkdir(join(controller.store.root, "receipts"), { recursive: true });
+    await writeFile(join(controller.store.root, "receipts", "failed-first.json"), JSON.stringify({ accountId: account.id, launchToken: token }));
+    const failed = { agents: { ref: () => ({ refresh: async () => ({ agent: { status: "error" } }) }) } } as unknown as PaseoApi;
+    expect((await controller.snapshot(failed)).bindings[0].currentAccountId).toBeNull();
+    expect(await controller.accountOf(failed, "failed-first", "codex")).toBe(account.id);
+    expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: account.id, launchToken: null });
+  });
+
+  it("offers the switch when an unconfirmed Codex agent's first turn fails on a used-up account", async () => {
+    const root = await newRoot(), home = join(root, "account-switcher");
+    vi.stubEnv("PASEO_HOME", root);
+    const on = new Map<string, (event: unknown, context: unknown) => Promise<unknown>>();
+    const dispose = contribute({ handle: () => {}, before: () => () => {}, on: (name: string, handler: never) => { on.set(name, handler); return () => {}; } } as never);
+    try {
+      const store = new AccountStore(home);
+      // Initialized by the plugin's controller: wait for its registry before changing it.
+      await vi.waitFor(async () => expect((await store.read()).accounts.length).toBeGreaterThan(0));
+      const work = await store.add("codex", "Work"), second = await store.add("codex", "Second"), token = "launch-token";
+      await store.change(r => {
+        r.integration.enabled = true;
+        for (const a of r.accounts) a.authStatus = "ready";
+        r.bindings.push({ agentId: "agent-1", provider: "codex", currentAccountId: null, pendingAccountId: null, launchAccountId: work.id, launchToken: token, status: "ready", error: null, registrationObserved: true });
+      });
+      await mkdir(join(home, "receipts"), { recursive: true });
+      await writeFile(join(home, "receipts", "agent-1.json"), JSON.stringify({ accountId: work.id, launchToken: token }));
+      const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
+      const reading = (accountId: string, usedPercent: number) => ({ accountId, provider: "codex", status: "ok", plan: null, fetchedAt: null, checkedAt: resetsAt, nextRetryAt: null, error: null,
+        windows: [{ id: "5h", label: "5 hours", usedPercent, windowDurationMins: 300, resetsAt, scope: "account" }] });
+      mocks.usage.refresh.mockResolvedValue([reading(work.id, 100), reading(second.id, 10)]);
+      const appended: { id: string; data: unknown }[] = [];
+      const host = { agents: { ref: () => ({
+        refresh: async () => ({ agent: { id: "agent-1", provider: "codex", status: "error", model: null } }),
+        timeline: { append: async (item: { id: string; data: unknown }) => { appended.push(item); return {}; } },
+      }) } };
+      await on.get("agent.turn_ended")!({ agent: { id: "agent-1", provider: "codex" }, turnId: "turn-1", outcome: { kind: "failed", error: { message: "Usage limit reached" } }, timeline: [] }, { paseo: host });
+      expect(appended).toEqual([expect.objectContaining({ id: "account-failover-agent-1-turn-1", data: expect.objectContaining({ state: "offered", from: "Work", fromId: work.id, toId: second.id }) })]);
+      expect((await store.read()).bindings[0]).toMatchObject({ currentAccountId: work.id, launchToken: null });
+    } finally { await dispose(); vi.unstubAllEnvs(); }
   });
 
   it("refuses a switch for an agent Paseo no longer has with a message written for the user", async () => {

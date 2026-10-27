@@ -18,6 +18,10 @@ import { LoginSessions, type LoginDependencies } from "./login";
 const execFileAsync=promisify(execFile);
 // A revoked sign-in fails every renewal; this bounds how often it starts the CLI.
 const RENEWAL_INTERVAL=600000;
+// Agent statuses that show a launch got under way, for the receipt check: the Accounts list waits for a session that is
+// up. Failover also takes "error", which Paseo sets when a turn fails, before the plugin's turn_ended hook runs: the
+// launcher wrote the receipt when it started the CLI, so the receipt still names the account the agent started on.
+const STARTED=["idle","running"],STARTED_FOR_FAILOVER=[...STARTED,"error"];
 export class AccountController {
  readonly store:AccountStore;
  readonly ready:Promise<void>;
@@ -56,30 +60,31 @@ export class AccountController {
   await this.reconcileDeletedAgents(paseo);
   await this.reconcileLogins();
   const state=await this.store.read();
-  for(const binding of state.bindings)await this.confirmLaunch(paseo,state,binding);
+  for(const binding of state.bindings)await this.confirmLaunch(paseo,state,binding,STARTED);
   return this.store.snapshot();
  }
  /** Confirms that an agent runs on the account it was launched on: the launcher's receipt names that account and launch,
-  * and the native session is up. True once the binding records it as the agent's account. */
- private async confirmLaunch(paseo:PaseoApi,state:Registry,binding:StoredBinding):Promise<boolean>{
+  * and the agent's status is one of `started`. True once the binding records it as the agent's account. */
+ private async confirmLaunch(paseo:PaseoApi,state:Registry,binding:StoredBinding,started:readonly string[]):Promise<boolean>{
   if(!state.integration.enabled||this.integrationChanging||binding.currentAccountId!==null||binding.status!=="ready"||!binding.launchAccountId||!binding.launchToken)return false;
   try{
    const receipt=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(binding.agentId)+".json"),"utf8"));
    if(receipt.accountId!==binding.launchAccountId||receipt.launchToken!==binding.launchToken)return false;
    const live=await paseo.agents.ref(binding.agentId).refresh();
-   if(!live||!["idle","running"].includes(live.agent.status))return false;
+   if(!live||!started.includes(live.agent.status))return false;
    return await this.store.change(r=>{const b=r.bindings.find(b=>b.agentId===binding.agentId);if(r.integration.enabled&&!this.integrationChanging&&b&&b.launchToken===binding.launchToken&&b.launchAccountId===binding.launchAccountId&&b.currentAccountId===null&&b.status==="ready"){b.currentAccountId=binding.launchAccountId;b.launchToken=null;b.registrationObserved=true;return true;}return false;});
   }catch{/* The UI keeps the account unconfirmed until native startup succeeds. */return false;}
  }
- /** The account an agent runs on. A launch not confirmed yet is confirmed now by its receipt, the check `snapshot` makes
-  * while the app polls: an agent started with no app open (a schedule, a heartbeat, `paseo run`) would otherwise wait for
-  * that. Null when nothing confirms one. `state` is the registry to take the binding from, the latest by default. */
+ /** The account an agent runs on, for failover. A launch not confirmed yet is confirmed now by its receipt, the check
+  * `snapshot` makes while the app polls: an agent started with no app open (a schedule, a heartbeat, `paseo run`) would
+  * otherwise wait for that. Unlike `snapshot` it also accepts an agent a failed turn left in "error". Null when nothing
+  * confirms one. `state` is the registry to take the binding from, the latest by default. */
  async accountOf(paseo:PaseoApi,agentId:string,provider:Provider,state?:Registry):Promise<string|null>{
   await this.ready;
   const registry=state??await this.store.read(),known=boundAccount(registry,agentId,provider);
   if(known)return known;
   const binding=registry.bindings.find(b=>b.agentId===agentId);
-  return binding&&await this.confirmLaunch(paseo,registry,binding)?binding.launchAccountId:null;
+  return binding&&await this.confirmLaunch(paseo,registry,binding,STARTED_FOR_FAILOVER)?binding.launchAccountId:null;
  }
  async observeAgentRegistration(agentId:string){
   await this.ready;

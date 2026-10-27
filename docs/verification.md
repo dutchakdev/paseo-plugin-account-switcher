@@ -96,7 +96,7 @@ local and SSH-based results.
 
 - `npm run check` on macOS (arm64) with Node.js **22.23.0**, TypeScript **7.0.2**
   and Vitest **5.0.5** passed: the launcher build (522,832 bytes, three
-  third-party licenses), typecheck with no errors, and **461/461 tests** in 38
+  third-party licenses), typecheck with no errors, and **463/463 tests** in 38
   files. `node scripts/release.mjs check` passed.
 - Paseo facts behind the fixes, read in the Paseo source at tags v0.11.0 and
   v0.13.0: the Claude provider's `appendResultEvents` turns every result of
@@ -109,7 +109,8 @@ local and SSH-based results.
   **Continue.**, the cached-reading prefilter and the stale and
   `usageAllowed: false` cases of `failoverDecision` (`tests/failover.test.ts`,
   `tests/server-hooks.test.ts`); an unconfirmed launch confirmed by its receipt
-  through `accountOf`, with no row and a clear refusal without one
+  through `accountOf`, also for an agent a failed turn left in `error` (the hook
+  test runs the real controller), with no row and a clear refusal without one
   (`tests/controller.test.ts`, `tests/server-hooks.test.ts`); stale offers,
   `switchTo` putting the selection back after a refusal, and `SwitchRefusal`
   against other errors (`tests/switching.test.ts`, `tests/server-hooks.test.ts`,
@@ -333,11 +334,11 @@ Checked with an isolated Paseo **0.8.0** daemon, Claude Code **2.1.259**, and Co
   the global list next to the Account Switcher card. Cards of different sources
   cannot be merged from a plugin.
 - Failover needs the agent's account confirmed. An unconfirmed launch is
-  confirmed from its receipt only while the agent is `idle` or `running`. Paseo
-  marks an agent `error` after a failed turn, before the plugin's hook runs
-  (`finalizeForegroundTurn`, v0.11.0 and v0.13.0), so a Codex agent whose launch
-  was never confirmed gets no row for that failed turn. A Claude turn stopped by
-  its limit ends `completed` and `idle`, so it is confirmed.
+  confirmed from its receipt, and for failover also while the agent is `error`,
+  which Paseo sets after a failed turn before the plugin's hook runs
+  (`finalizeForegroundTurn`, v0.11.0 and v0.13.0). The Accounts list still
+  confirms only an `idle` or `running` agent. An agent without a matching
+  receipt gets no row.
 - A new agent that fails before registering, without a startup receipt, can leave
   an unconfirmed reservation requiring manual diagnosis. Archived agents retain
   bindings for resume.
