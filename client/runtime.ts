@@ -5,7 +5,8 @@ import { currentAccount, currentAccountName, errorMessage, supportedProvider, us
 
 // npm installs omit devDependencies, so `@getpaseo/client` types are named through the host SDK entry.
 type PaseoAgent = Awaited<ReturnType<PluginClientContext["paseo"]["agents"]["list"]>>["entries"][number]["agent"];
-// New hosts return an owned observation; the pinned 0.8 SDK predates this handle.
+// The owned observation a subscribed listing returns. Only `release` is used, so that much is declared here instead of
+// naming the client SDK's type, which npm installs omit.
 type DirectorySubscription = { release(): Promise<void> };
 
 export type PillTarget = Readonly<{ workspaceId: string; agentId: string }>;

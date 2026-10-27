@@ -88,9 +88,35 @@ local and SSH-based results.
   listens to `agent.turn_ended` for failover, and reads only `agent`, `turnId` and
   `outcome` from it, not the `timeline` that 0.13 leaves empty.
 - Not yet checked live: an agent on a managed account showing that account in
-  Paseo's usage popover, the Usage view listing each managed account once, and a
+  Paseo's usage popover, the Usage view listing the managed accounts, and a
   used-up reading producing the failover row and its switch. They are listed under
   Remaining live acceptance.
+
+## Final review fixes to failover — 2026-10-27
+
+- `npm run check` on macOS (arm64) with Node.js **22.23.0**, TypeScript **7.0.2**
+  and Vitest **5.0.5** passed: the launcher build (522,832 bytes, three
+  third-party licenses), typecheck with no errors, and **461/461 tests** in 38
+  files. `node scripts/release.mjs check` passed.
+- Paseo facts behind the fixes, read in the Paseo source at tags v0.11.0 and
+  v0.13.0: the Claude provider's `appendResultEvents` turns every result of
+  subtype `success` into `turn_completed`, an API error with `is_error` set
+  included; `finalizeForegroundTurn` sets an agent with a terminal error to
+  `error` before the stream event that becomes `agent.turn_ended` is dispatched.
+- New tests: a completed Claude turn checked only when the cached reading shows
+  the account used up (no refresh otherwise), Codex completed turns still
+  ignored, an automatic switch after a completed Claude turn without
+  **Continue.**, the cached-reading prefilter and the stale and
+  `usageAllowed: false` cases of `failoverDecision` (`tests/failover.test.ts`,
+  `tests/server-hooks.test.ts`); an unconfirmed launch confirmed by its receipt
+  through `accountOf`, with no row and a clear refusal without one
+  (`tests/controller.test.ts`, `tests/server-hooks.test.ts`); stale offers,
+  `switchTo` putting the selection back after a refusal, and `SwitchRefusal`
+  against other errors (`tests/switching.test.ts`, `tests/server-hooks.test.ts`,
+  `tests/ui-failover-row.test.ts`, `tests/failover-row.test.ts`). They use
+  stand-in daemon and app objects; no Paseo daemon or app was started.
+- Not checked live: a Claude turn on a really used-up account, and an agent
+  started with no app open. Both are listed under Remaining live acceptance.
 
 ## Paseo 0.14 compatibility — 2026-10-27
 
@@ -274,14 +300,22 @@ Checked with an isolated Paseo **0.8.0** daemon, Claude Code **2.1.259**, and Co
 ## Remaining live acceptance
 
 - In a Paseo 0.11 or later app on a real daemon: an agent on a managed account
-  shows that account in Paseo's usage popover, and the Usage view lists each
-  managed account once and none of the **Current CLI** accounts twice. Paseo may
-  also read `CLAUDE_CONFIG_DIR` for settings or session files; a managed home links
-  those directories to the source home, so check that a chat on a managed account
-  behaves as before.
-- A failed turn on a really used-up account (or a forced reading) produces the
-  failover row, the button switches and sends **Continue.**, and automatic
-  switching does the same with the setting on. Include an agent on **Current CLI**.
+  shows that account in Paseo's usage popover, and the Usage view lists the
+  managed accounts and none of the **Current CLI** accounts twice. After an
+  agent's usage details are opened, expect the known duplicate described under
+  Known limits. Paseo may also read `CLAUDE_CONFIG_DIR` for settings or session
+  files; a managed home links those directories to the source home, so check
+  that a chat on a managed account behaves as before.
+- A Codex turn that fails on a really used-up account (or a forced reading)
+  produces the failover row, the button switches and sends **Continue.**, and
+  automatic switching does the same with the setting on. Include an agent on
+  **Current CLI**.
+- A Claude turn that hits its limit, which Paseo reports as completed, produces
+  the row; with automatic switching on, the chat switches without **Continue.**
+  and the row says where the next message runs. The SDK and provider mapping
+  behind this was read in source, not observed on a live account.
+- An agent started with no app open (a schedule or `paseo run`) gets the row
+  once its launch receipt confirms its account.
 - Two distinct authenticated accounts for **each** provider, concurrent agents,
   and A → B → A within the same chat.
 - Comparing every reported quota with the provider's own display, including
@@ -293,6 +327,17 @@ Checked with an isolated Paseo **0.8.0** daemon, Claude Code **2.1.259**, and Co
 
 ## Known limits
 
+- Paseo's Usage view can show one managed account twice. Opening the usage
+  details of an agent on a managed account lets Paseo's own Claude or Codex
+  source find that login through the session environment, and Paseo adds it to
+  the global list next to the Account Switcher card. Cards of different sources
+  cannot be merged from a plugin.
+- Failover needs the agent's account confirmed. An unconfirmed launch is
+  confirmed from its receipt only while the agent is `idle` or `running`. Paseo
+  marks an agent `error` after a failed turn, before the plugin's hook runs
+  (`finalizeForegroundTurn`, v0.11.0 and v0.13.0), so a Codex agent whose launch
+  was never confirmed gets no row for that failed turn. A Claude turn stopped by
+  its limit ends `completed` and `idle`, so it is confirmed.
 - A new agent that fails before registering, without a startup receipt, can leave
   an unconfirmed reservation requiring manual diagnosis. Archived agents retain
   bindings for resume.

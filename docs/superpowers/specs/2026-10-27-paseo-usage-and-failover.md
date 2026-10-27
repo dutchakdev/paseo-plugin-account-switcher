@@ -31,6 +31,13 @@ Checked in Paseo's code and SDK packages, not assumed:
 - Paseo does not normalize provider limit errors (no limit code on a failed
   turn's outcome). The plugin already decides "exhausted" from fresh readings
   (`server/selection.ts`).
+- Corrected after the final review: a limit stop does not always arrive as a
+  failed turn. The Claude Agent SDK ends a turn that hit an API error, a limit
+  included, with a `result` of subtype `success` and `is_error: true`, and
+  Paseo's Claude provider maps every `success` result to `turn_completed`
+  (`appendResultEvents` in `packages/server/src/server/agent/providers/claude/agent.ts`:
+  v0.11.0 line 4625, v0.13.0 line 4844; the review found the same in
+  0.14.0-beta.1). Codex reports `status: "failed"`, so `turn_failed`.
 
 ## A. Session env: Paseo's per-agent popover reads the real account
 
@@ -58,6 +65,13 @@ so those reads see the same files. Verified on a live agent before release.
   account's name; harness: "Claude Code" or "Codex".
 - `discover({ kind: "session" })`: `[]`. With A in place the built-in source
   reports the session's account; reporting it here too would show it twice.
+- Known limitation, kept after the final review: one account can still show
+  twice. Paseo ids a report as `${source.id}:${key}`, and `mergeKnown` adds
+  accounts found in agent sessions to the global list. With A, opening an
+  agent's usage details lets the built-in Claude or Codex source discover the
+  managed login, so the view can show "Claude · email" next to
+  "Account Switcher · Work". A plugin cannot merge cards across sources; the
+  source stays, and README, this section and `docs/verification.md` say so.
 - `fetch({ accountId })`: the plugin's cached snapshot, mapped without new
   requests. `ok`/`stale` → `available` with `planLabel`, one window per reading
   (`windowFromReportedDuration`, duration from `windowDurationMins`, a `scope`
@@ -66,10 +80,20 @@ so those reads see the same files. Verified on a live agent before release.
 
 ## C. Failover when a turn fails on an exhausted limit
 
-Trigger: `agent.turn_ended` with `outcome.kind === "failed"` for a Claude or
-Codex agent. Evidence, not text: refresh the agent's current account and ask
-`selection.ts` for its blocker. Only `"exhausted"` continues; any other failure
-is left alone.
+Trigger: `agent.turn_ended` for a Claude or Codex agent with
+`outcome.kind === "failed"`, or, for Claude only, `"completed"` (see the
+corrected fact above). A completed Claude turn first passes a cheap prefilter
+on the cached reading of the agent's account: an account-wide window at 100%
+or more with a reset still ahead, or `usageAllowed === false`. Without that,
+it ends with no provider request. Evidence, not text: refresh the agent's
+current account and ask `selection.ts` for its blocker. Only `"exhausted"`
+continues; any other failure is left alone. Completed Codex turns and
+canceled turns are ignored.
+
+The agent's account is its binding's confirmed account, or, for a launch not
+confirmed yet, the launch account once its receipt confirms it with the same
+check the Accounts list makes; an agent without a binding is on its
+provider's Current CLI account. Nothing confirmed, no row.
 
 Candidate: `launchOrder` over the provider's other signed-in accounts that are
 not exhausted and offer the agent's model (Codex). The plugin appends one chat
@@ -82,11 +106,17 @@ row per failed turn (`timeline.append`, kind `account-failover`, version 1):
 The button calls an RPC that applies the switch through the existing path
 (identity check, idle, no pending permission, receipt) and, on success, sends
 the agent "Continue." The row then reads "Switched from Work to Second." or the
-failure reason. Rows are best effort, like the existing notes.
+failure reason. Rows are best effort, like the existing notes. The row carries
+the account it moves from; an offer is refused once the agent runs on another
+account or already on the offered one. A switch refused before it starts
+leaves no selection behind, and only the switch service's own refusals reach
+the row; any other error shows a generic sentence and goes to the log.
 
 Automatic switching: a per-provider setting in Accounts, off by default. When
 on, the same flow runs without the click and the row says it switched
-automatically. Guard: at most one automatic switch per failed turn and three per
+automatically. After a completed Claude turn it does not send "Continue.",
+since the turn may really have finished; the row adds "Your next message runs
+on Second.". After a failed turn it sends "Continue." as the button does. Guard: at most one automatic switch per failed turn and three per
 agent per hour; never back to an account it left within that hour.
 
 ## D. Screens
@@ -112,5 +142,6 @@ Switching stays a human decision, so agents get no switching tool.
 - Typecheck with SDK 0.11.4; client bundle compiled by the installed daemon and
   loaded into stand-in 0.11 and 0.14 apps.
 - Live: an agent on a managed account shows that account in Paseo's popover; the
-  Usage modal lists managed accounts once; a forced exhausted reading produces
-  the row and the switch.
+  Usage modal lists the managed accounts (with the known duplicate of B once an
+  agent's usage details were opened); a forced exhausted reading produces the
+  row and the switch, for a failed Codex turn and a completed Claude one.

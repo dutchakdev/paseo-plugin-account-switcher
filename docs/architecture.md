@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-Account Switcher is an independent plugin for Paseo 0.11.x through 0.14.x, including beta releases after 0.11.0. It uses public plugin and provider APIs; no Paseo core patch is required. The development SDK is pinned to 0.11.4, the oldest supported release, so typechecking shows the plugin uses only the 0.11 API. Anything newer is detected at runtime (the screen API, the usage source) and has a fallback or is skipped.
+Account Switcher is an independent plugin for Paseo 0.11.x through 0.14.x, including beta releases after 0.11.0. It uses public plugin and provider APIs; no Paseo core patch is required. The development SDK is pinned to 0.11.4, the oldest supported release, so typechecking shows the plugin uses only the 0.11 API. The screen API and the usage source are 0.11 APIs, so every supported release has them. The plugin still checks for them at runtime, falling back to the older surface API or skipping the usage source; on a supported host these checks are defensive and change nothing.
 
 ```mermaid
 flowchart LR
@@ -18,7 +18,7 @@ flowchart LR
   Monitor -->|Cached readings| Source[Usage source]
   Source --> PaseoUsage[Paseo Usage view]
   Controller -->|Session env| PaseoPopover[Paseo usage popover]
-  Hooks[Agent turn hook] -->|Failed turn| Controller
+  Hooks[Agent turn hook] -->|Turn that may have hit a limit| Controller
   Controller -->|Failover row| Chat[Chat timeline]
 ```
 
@@ -51,7 +51,9 @@ Enabling integration saves the original Claude and Codex commands and configures
 
 An agent binding records its confirmed current account separately from its pending selection and requested launch account. **Prepare** changes only the selection. **Apply** verifies identity and idle state, reserves a launch token, and invokes `paseo agent reload` against the same daemon.
 
-The launcher chooses the assigned profile and writes a startup receipt containing the matching account and launch token. The controller confirms the switch only after reload succeeds and the receipt matches. Failure triggers an attempt to restore the previous profile. A failed rollback or interrupted switch leaves the account unconfirmed instead of displaying an assumed account.
+The launcher chooses the assigned profile and writes a startup receipt containing the matching account and launch token. The controller confirms the switch only after reload succeeds and the receipt matches. A failure after the binding enters `switching` triggers an attempt to restore the previous profile; a refusal before that point changes nothing. A failed rollback or interrupted switch leaves the account unconfirmed instead of displaying an assumed account.
+
+A new agent's binding stays unconfirmed (`currentAccountId` null) until a receipt check confirms its launch account: the receipt names that account and launch token, and the agent's session is `idle` or `running`. `controller.snapshot` runs the check for every binding as the app polls `accounts.list`; `controller.accountOf` runs it for one agent when failover or a switch note needs that agent's account, so an agent started with no app open (a schedule, a heartbeat, `paseo run`) is confirmed too.
 
 A provider default is assigned during interactive agent creation, unless the cached limits prove it would fail and the registry's per-provider `fallback` is on (the default; registries from 0.6 read as on). With `fallback` off, only the default is tried. The `agent.create` hook stores the requested model in a private environment variable; Paseo passes that environment to the same agent's first `agent.session_open`, which has the agent ID, binds the agent and removes the variable before the CLI starts.
 
@@ -91,18 +93,25 @@ A managed home links the shared directories to the source home, so other reads o
 `server/paseo-usage.ts` registers a usage source named **Account Switcher** (`id: "account-switcher"`) when `server.registerUsageSource` exists, and does nothing otherwise. Its input is `{ accountId }`, a registry locator and never a credential.
 
 - `discover` answers only the `global` scope: managed accounts that are signed in, not in the middle of a sign-in, and with an `identityKey`. Accounts whose identity equals the same provider's system account are left out, since Paseo's own card covers that login. The key is the Codex account ID, or a Claude identity with `claude:` written `claude-`. A value Paseo would refuse (a character outside `[A-Za-z0-9._-]`, or longer than 128) is replaced by a hash, so no email is exposed. The `session` scope returns nothing: with the session environment in place Paseo's own source reports that account, and a second report would show it twice.
+- Known limitation: one managed account can appear twice in the Usage view. Paseo ids a report as `<source id>:<key>`, and its merge adds accounts found through agent sessions to the global list. With the session environment above, opening the usage details of an agent on a managed account lets Paseo's own Claude or Codex source find that login, so the view can show *Claude · email* next to *Account Switcher · Work*. The plugin keeps its source, since cards of different sources cannot be merged from a plugin.
 - `fetch` maps the controller's cached snapshot and makes no provider request. `ok` and `stale` give an available report with the plan and one window per reading, a duration from the reported minutes, a `scope` for model windows, the reading's `detail` as a detail, and account-wide windows marked as the summary. `needs_auth` and `unavailable` give an error with a fixed short message.
 - Window ids come from the quota's label, not from the response position. Paseo matches pinned windows by id, and the collectors' own ids are positions (`weekly_scoped:0`, `gpt-5.3-codex-spark:primary`) that shift when a provider reorders its response. The label names the quota; Codex's `· primary` or `· secondary` slot suffix is dropped. Two readings that name the same quota and period get `:2`, `:3` and so on, the only place order enters an id.
 
 ### Failover on a used-up limit
 
-Paseo does not say why a turn failed, so the plugin decides from its own readings, not from text.
+Paseo does not say why a turn failed, so the plugin decides from its own readings, not from text. Which turns it looks at depends on the provider. Codex reports a turn its limit stopped as `failed`. Claude reports it as `completed`: the Claude Agent SDK ends such a turn with a result of subtype `success` and `is_error` set, and Paseo's Claude provider maps every `success` result to `turn_completed` (0.11.0 through 0.14.0-beta.1). So `failed` turns of both providers are checked, and `completed` Claude turns too, behind a prefilter: `mayBeUsedUp` on the cached reading of the agent's account (an account-wide window full until a later reset, or `usageAllowed` false). An ordinary completed turn ends there without a provider request. Canceled turns and completed Codex turns are ignored.
 
 ```mermaid
 flowchart TD
-  T[agent.turn_ended, outcome failed] --> P{Claude or Codex, integration on for it,<br/>no switch under way for this turn?}
-  P -- no --> Z[nothing]
-  P -- yes --> R[read the account's limits and the agent again]
+  T[agent.turn_ended] --> K{failed, or completed on Claude?}
+  K -- no --> Z[nothing]
+  K -- yes --> P{integration on for the provider,<br/>no switch under way for this turn?}
+  P -- no --> Z
+  P -- yes --> W[accountOf: the agent's account,<br/>an unconfirmed launch confirmed by its receipt]
+  W -- none --> Z
+  W --> Q{completed: does the cached reading<br/>show the account used up?}
+  Q -- no --> Z
+  Q -- "yes, or a failed turn" --> R[read the account's limits and the agent again]
   R --> E{failoverDecision: is the account used up?}
   E -- no --> Z
   E -- yes --> C{another account would be tried first<br/>by launchOrder?}
@@ -110,16 +119,19 @@ flowchart TD
   C -- yes --> A{automatic switching on<br/>and the guard allows it?}
   A -- no --> O[row: offer with a button]
   O -->|click: failover.apply| S
-  A -- yes --> S[row: switching, then prepare and apply]
-  S -- ok --> D[row: switched, then send Continue.]
+  A -- yes --> S[row: switching, then switchTo]
+  S -- ok --> D[row: switched, then send Continue.<br/>not after an automatic switch on a completed turn]
   S -- refused or failed --> F[row: could not switch, with the reason]
 ```
 
 - **Decision.** `server/failover.ts` (`failoverDecision`) returns a decision only when the current account's blocker, from `selection.ts`, is `exhausted`: an account-wide window at 100% with a future reset, or a fresh Codex reading with ordinary usage not allowed. A plan without the model is not a limit and gives nothing. The replacement is the first account `launchOrder` would try instead of the current one, so the rules for spares are those of a new agent. `resetsAt` is the latest end among the full windows.
-- **Evidence is read again.** The hook refreshes the account's limits and the agent in parallel, then reads the registry once more and returns if a switch started or the binding moved meanwhile. From that read to the row nothing awaits.
-- **The row.** A plugin timeline item of kind `account-failover`, version 1, with the states `offered`, `none`, `switching`, `switched`, `auto`, and `failed` (`shared/failover.ts`). Its id is `account-failover-<agentId>-<turnId>`, and appending with the same id replaces the row, so one row follows the offer through to its outcome. `client/failover-row.tsx` draws it and calls `failover.apply` through the client handed in at registration, not through `useRpc`, because an app may draw timeline rows outside the plugin's RPC provider. The RPC accepts only a row id that starts with the agent's own prefix.
-- **The switch.** Button and automatic switching share one function: it appends the `switching` row, then runs the same `prepare` and `apply` as `/account`, which check the account's identity, that the agent is idle and has no pending permission request, and the launch receipt. On success it rewrites the row, refreshes the new account's limits, and sends the agent `Continue.`; a prompt that cannot be delivered is only logged, because the switch stands. On failure the row shows the reason and the error is rethrown to the click.
-- **One at a time.** A set of agents with a switch in flight is claimed before any await. The hook ignores a failed turn reported again while a switch is under way, after its automatic switch, or while the binding is `switching`, so a repeated report cannot roll the row back to an offer.
+- **The agent's account.** `controller.accountOf` gives the binding's confirmed account, or confirms an unconfirmed launch by its receipt (the check described under switching), or, for an agent without a binding, its provider's Current CLI account. Nothing confirmed means no row. The receipt check needs the agent `idle` or `running`; Paseo marks an agent `error` after a failed turn, before `agent.turn_ended` fires, so a Codex agent whose launch was never confirmed is not confirmed by its failed turn either.
+- **Evidence is read again.** The hook refreshes the account's limits and the agent in parallel, then reads the registry once more and returns if a switch started or the binding moved meanwhile (`boundAccount`, the registry half of `accountOf`). From that read to the row nothing awaits.
+- **The row.** A plugin timeline item of kind `account-failover`, version 1, with the states `offered`, `none`, `switching`, `switched`, `auto`, and `failed` (`shared/failover.ts`). Its id is `account-failover-<agentId>-<turnId>`, and appending with the same id replaces the row, so one row follows the offer through to its outcome. Two optional fields were added without a version change, and rows without them still render: `fromId`, the account the offer moves from, and `resumes`, false when an automatic switch did not ask the agent to continue (the row then adds *Your next message runs on Second.*). `client/failover-row.tsx` draws it and calls `failover.apply` through the client handed in at registration, not through `useRpc`, because an app may draw timeline rows outside the plugin's RPC provider. The RPC accepts only a row id that starts with the agent's own prefix.
+- **A stale offer.** The button passes the row's `fromId`. `failover.apply` refuses, and turns the row `failed` with the reason, when the agent now runs on another account or already runs on the offered one. A row without `fromId` gets only the second check.
+- **The switch.** Button and automatic switching share one function: it appends the `switching` row, then runs `SwitchService.switchTo`, the same `prepare` and `apply` as `/account` in one step, which check the account's identity, that the agent is idle and has no pending permission request, and the launch receipt. A refusal before the binding enters `switching` puts the binding's selection, status, error and launch token back as they were, and drops a binding the step created, so no selection the user never made stays pending; a failure after that point rolls back as **Apply** does. On success it rewrites the row, refreshes the new account's limits, and sends the agent `Continue.`, except after an automatic switch on a completed Claude turn, which may have finished for real; a prompt that cannot be delivered is only logged, because the switch stands.
+- **What a failure shows.** The switch service's own refusals are `SwitchRefusal` errors, including those its controller dependencies raise (integration changing, agent not found, reload failed). Only their messages reach the row and the RPC. Any other error, whose text can name files, shows *The switch failed; the plugin log has details.* and goes to `console.error`.
+- **One at a time.** A set of agents with a switch in flight is claimed before any await. The hook ignores a turn reported again while a switch is under way, after its automatic switch, or while the binding is `switching`, so a repeated report cannot roll the row back to an offer.
 - **Automatic switching.** The registry holds `autoFailover` per provider (off by default; registries from before it read as off), set by `accounts.auto-failover` from the setting in Accounts, which shows for a provider with more than one account. When on, an offer goes through `AutoFailoverGuard` first: one switch per turn, three per agent in a rolling hour, and never to an account the agent left in that hour. It lives in memory and resets with the daemon. The switch is not awaited by the hook, because reloading the agent and waiting for its launch takes longer than Paseo waits for a hook; the row reports progress. When the guard refuses, the ordinary offer appears instead.
 
 ## Sign-in
