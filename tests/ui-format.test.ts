@@ -42,7 +42,7 @@ describe("manual switch readiness", () => {
   it("distinguishes an unbound system session from a failed switch with unknown actual identity", () => {
     const state: AccountState = {
       accounts: [{ id: "system-codex", provider: "codex", source: "system", label: "System Codex", authStatus: "ready", email: null, plan: null, createdAt: "2026-09-15" }],
-      bindings: [], defaults: { claude: null, codex: null }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
+      bindings: [], defaults: { claude: null, codex: null }, fallback: { claude: true, codex: true }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
     };
     expect(currentAccount(state, "agent", "codex")?.id).toBe("system-codex");
     expect(currentAccountName(state, "agent", "codex")).toBe("System Codex");

@@ -13,6 +13,8 @@ const CommandsSchema = z.object({ claude: z.array(z.string()).nullable(), codex:
 export const RegistrySchema = z.object({
  version: z.literal(1), accounts: z.array(StoredAccountSchema), bindings: z.array(StoredBindingSchema),
  defaults: z.object({claude:z.string().nullable(),codex:z.string().nullable()}),
+ // Whether a new agent may start on another account when the default would fail; registries before 0.7 had no choice and default to on.
+ fallback: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:true,codex:true}),
  sourceHomes: z.object({claude:z.string(),codex:z.string()}),
  sourceEnvironment: z.object({claude:z.object({CLAUDE_CONFIG_DIR:z.string().optional(),CLAUDE_SECURESTORAGE_CONFIG_DIR:z.string().optional()}),codex:z.object({CODEX_HOME:z.string().optional()})}).default({claude:{},codex:{}}),
  commands: CommandsSchema, originalCommands: CommandsSchema,
@@ -61,7 +63,7 @@ export class AccountStore {
  async snapshot():Promise<AccountState> {
    const state=await this.read();
    const status=(provider:Provider)=>({available:state.available[provider],integrated:state.integration.enabled&&state.integration.providers.includes(provider)});
-   return { accounts:state.accounts.map(a=>AccountSchema.parse(a)),bindings:state.bindings.map(b=>BindingSchema.parse(b)),defaults:state.defaults,integration:{enabled:state.integration.enabled,error:state.integration.error},providers:{claude:status("claude"),codex:status("codex")} };
+   return { accounts:state.accounts.map(a=>AccountSchema.parse(a)),bindings:state.bindings.map(b=>BindingSchema.parse(b)),defaults:state.defaults,fallback:state.fallback,integration:{enabled:state.integration.enabled,error:state.integration.error},providers:{claude:status("claude"),codex:status("codex")} };
  }
  async add(provider:Provider,label:string):Promise<StoredAccount> {
    return this.change(state=>{const account:StoredAccount={id:randomUUID(),provider,label:label.trim(),source:"managed",home:"",email:null,plan:null,authStatus:"needs_auth",createdAt:new Date().toISOString(),identityKey:null,generation:0,loginToken:null};account.home=join(this.root,"accounts",account.id,provider);state.accounts.push(account);return account;});

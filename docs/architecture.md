@@ -47,7 +47,7 @@ An agent binding records its confirmed current account separately from its pendi
 
 The launcher chooses the assigned profile and writes a startup receipt containing the matching account and launch token. The controller confirms the switch only after reload succeeds and the receipt matches. Failure triggers an attempt to restore the previous profile. A failed rollback or interrupted switch leaves the account unconfirmed instead of displaying an assumed account.
 
-A provider default is assigned during interactive agent creation, unless the cached limits prove it would fail. The `agent.create` hook stores the requested model in a private environment variable; Paseo passes that environment to the same agent's first `agent.session_open`, which has the agent ID, binds the agent and removes the variable before the CLI starts.
+A provider default is assigned during interactive agent creation, unless the cached limits prove it would fail and the registry's per-provider `fallback` is on (the default; registries from 0.6 read as on). With `fallback` off, only the default is tried. The `agent.create` hook stores the requested model in a private environment variable; Paseo passes that environment to the same agent's first `agent.session_open`, which has the agent ID, binds the agent and removes the variable before the CLI starts.
 
 ```mermaid
 flowchart TD

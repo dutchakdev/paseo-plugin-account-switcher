@@ -1,7 +1,7 @@
 import { useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { addAccount, cancelLogin, checkLogin, cliName, missingCli, refreshUsage, removeAccount, renameAccount, setDefaultAccount, setIntegration, startLogin,
+import { addAccount, cancelLogin, checkLogin, cliName, missingCli, refreshUsage, removeAccount, renameAccount, setDefaultAccount, setFallback, setIntegration, startLogin,
   type Account, type AccountState, type LoginSession, type Provider, type UsageSnapshot } from "../shared/contracts";
 import { body, Button, Field, heading, IconButton, InlineAction, muted, Notice, QuotaSummary, row, Segmented, StatusDot, toneColor } from "./components";
 import { useAccountsData, useAction, useNow } from "./data";
@@ -153,6 +153,7 @@ export function AccountsSurface(props: AccountsProps) {
   const { accounts, usage } = useAccountsData(host.id);
   const refresh = useRpc(refreshUsage);
   const integration = useRpc(setIntegration);
+  const fallback = useRpc(setFallback);
   const action = useAction(host.id, onChanged);
   const now = useNow();
   const [adding, setAdding] = useState<Provider | null>(null);
@@ -195,6 +196,14 @@ export function AccountsSurface(props: AccountsProps) {
           <Text accessibilityRole="header" style={heading(theme)}>{providerName[provider]}</Text>
           <Text style={muted(theme)}>{group.length}</Text>
         </View>
+        {state.defaults[provider] && group.length > 1 ? <View style={{ gap: 4 }}>
+          <Segmented theme={theme} label={`When the ${providerName[provider]} default would fail`} value={state.fallback[provider] ? "fallback" : "default"}
+            disabled={action.isPending} onChange={(value) => action.run(() => fallback({ provider, enabled: value === "fallback" }))}
+            options={[{ value: "fallback", label: "Start on another account" }, { value: "default", label: "Always use the default" }]} />
+          <Text style={muted(theme)}>{state.fallback[provider]
+            ? "A new agent starts on another signed-in account when the latest limits show the default would fail."
+            : "New agents always start on the default, even when its limits are used up."}</Text>
+        </View> : null}
         {!status.available ? <Notice theme={theme}>{missingCli(provider)}</Notice>
           : enabled && !status.integrated ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <View style={{ flex: 1, minWidth: 200 }}><Notice theme={theme} tone="warning">Account switching is off for {cliName[provider]}: its agents use the system CLI.</Notice></View>
