@@ -55,6 +55,32 @@ The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
 
+## Paseo 0.14 compatibility — 2026-10-27
+
+- The manifest accepts `0.11.* || 0.12.* || 0.13.* || 0.14.*`; development SDK
+  dependencies remain pinned to 0.8.0.
+- Paseo **0.14.0-beta.1**'s own `assertPluginCompatibility` rejected the previous
+  range for 0.14.0-beta.1, 0.14.0, and 0.14.9, so 0.7.0 cannot load on 0.14. The new
+  range was accepted for 0.11.0-beta.1, 0.11.4, 0.12.0, 0.13.2, 0.14.0-beta.1, 0.14.0,
+  and 0.14.9, and rejected for 0.10.3, 0.15.0-beta.1, and 0.15.0. Checks against
+  future version numbers validate the range, not those runtimes.
+- 0.14 changes only the server half of the plugin SDK: `agent.session_open`
+  requests gain `title`, `labels`, `tools`, and `mcpServers`, `defineAgentTool`
+  lets a plugin give agents tools of its own, and providers get a
+  `session.can_stop_runtime` request. The client entries are unchanged. The
+  plugin's `agent.session_open` hook changes only `env` and spreads the rest of the
+  request, so the new fields, and the tools other plugins put there, pass through.
+- With the SDK swapped to **0.14.0-beta.1** in a scratch copy, typecheck passed
+  with no errors and **308/308 tests** passed. The build step is skipped there for
+  the reason recorded under 0.12.
+- With the pinned 0.8.0 SDK, `npm run check` passed: launcher build, typecheck, and
+  **308/308 tests**.
+- An isolated **0.14.0-beta.1** daemon with an empty home directory installed the
+  plugin from source as `running` and logged `Plugin ready`, alongside Machine
+  Status, Mermaid, and Secure Input. A Claude Haiku agent created through that
+  daemon replied normally. Integration stayed disabled and no account was switched,
+  so this verifies loading, not switching or UI in a 0.14 client.
+
 ## Paseo 0.13 compatibility — 2026-10-22
 
 - The manifest accepts `^0.8.0 || 0.9.* || 0.10.* || 0.11.* || 0.12.* || 0.13.*`;

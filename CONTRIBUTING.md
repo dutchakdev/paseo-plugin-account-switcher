@@ -1,6 +1,6 @@
 # Contributing
 
-Account Switcher is a TypeScript plugin for Paseo 0.11.x through 0.13.x, including beta releases after 0.11.0, with a React Native client and a Node.js daemon component. Changes should preserve explicit account selection, profile isolation, and honest limits data.
+Account Switcher is a TypeScript plugin for Paseo 0.11.x through 0.14.x, including beta releases after 0.11.0, with a React Native client and a Node.js daemon component. Changes should preserve explicit account selection, profile isolation, and honest limits data.
 
 ## Development setup
 
