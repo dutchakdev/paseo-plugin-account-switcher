@@ -77,6 +77,8 @@ so those reads see the same files. Verified on a live agent before release.
   (`windowFromReportedDuration`, duration from `windowDurationMins`, a `scope`
   for model windows), `detail` strings as `details`; account-wide windows marked
   `summary`. `needs_auth`/`unavailable` → `error` with a short fixed message.
+  A reading with neither a percentage nor a detail is left out: Claude names
+  some limits without data (found live), and Paseo's own sources skip them.
 
 ## C. Failover when a turn fails on an exhausted limit
 

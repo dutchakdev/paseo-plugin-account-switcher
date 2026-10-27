@@ -117,6 +117,16 @@ describe("usageReport", () => {
     if (report.status !== "available") throw new Error("expected an available report");
     expect(report.windows.map(w => [w.id, w.usedPct, w.summary])).toEqual([["five_hour", 40, true], ["weekly", 12.5, true]]);
   });
+  it("leaves out a window the provider reported without data, as Paseo's own sources do", () => {
+    // Claude lists limits it reports no utilization for (live: "Weekly · cowork", "Weekly · omelette"); a meter of "—" for each is noise.
+    const empty: UsageWindow = { id: "weekly_scoped:3", label: "Weekly · cowork", usedPercent: null, windowDurationMins: 10080, resetsAt: null, scope: "model" };
+    const creditsOnly: UsageWindow = { ...spend, usedPercent: null };
+    const report = usageReport(snapshot({ windows: [fiveHour, empty, creditsOnly] }));
+    if (report.status !== "available") throw new Error("expected an available report");
+    expect(report.windows.map(w => w.label)).toEqual(["5-hour", "Monthly spend"]);
+    expect(report.details).toEqual([expect.objectContaining({ label: "Monthly spend", value: "$487.50 of $500.00 left" })]);
+  });
+
   it("keeps a model window under its own id, outside the summary", () => {
     const report = usageReport(snapshot({ windows: [fiveHour, sonnet] }));
     if (report.status !== "available") throw new Error("expected an available report");
@@ -136,10 +146,10 @@ describe("usageReport", () => {
     expect(report.windows).toEqual([expect.objectContaining({ id: "monthly-spend", label: "Monthly spend", usedPct: 2.5 })]);
     expect(report.windows[0]?.summary).toBeUndefined();
   });
-  it("keeps a reading with an unknown percentage and does not summarise a window of unknown scope", () => {
-    const report = usageReport(snapshot({ windows: [{ ...fiveHour, usedPercent: null, scope: undefined }] }));
+  it("keeps a reading with an unknown percentage that carries a detail, and does not summarise a window of unknown scope", () => {
+    const report = usageReport(snapshot({ windows: [{ ...spend, usedPercent: null, scope: undefined }] }));
     if (report.status !== "available") throw new Error("expected an available report");
-    expect(report.windows[0]).toMatchObject({ id: "five_hour", usedPct: null });
+    expect(report.windows[0]).toMatchObject({ id: "monthly-spend", usedPct: null });
     expect(report.windows[0]?.summary).toBeUndefined();
   });
   it("turns each provider-reported amount into a detail", () => {
