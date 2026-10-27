@@ -27,17 +27,20 @@ export function parseCodexUsage(payload: unknown): CollectedUsage {
   const map = object(root.rateLimitsByLimitId);
   const fallback = object(root.rateLimits);
   const buckets = map && Object.keys(map).length ? Object.entries(map) : fallback ? [[string(fallback.limitId) ?? "codex", fallback] as const] : [];
+  // `rateLimits` is the account's main bucket; others, such as a model's own bucket, limit only that model.
+  const main = string(fallback?.limitId) ?? (buckets.length === 1 ? buckets[0][0] : null);
   const windows: UsageWindow[] = [];
   let plan: string | null = null;
   for (const [id, candidate] of buckets) {
     const bucket = object(candidate);
     if (!bucket) continue;
     plan ??= string(bucket.planType);
+    const scope = id === main ? "account" as const : "model" as const;
     for (const key of ["primary", "secondary"]) {
       const window = object(bucket[key]);
       if (!window) continue;
       const duration = numeric(window.windowDurationMins);
-      windows.push({ id: `${id}:${key}`, label: `${string(bucket.limitName) ?? id} · ${durationLabel(duration, key)}`, usedPercent: numeric(window.usedPercent), windowDurationMins: duration, resetsAt: date(window.resetsAt, true) });
+      windows.push({ id: `${id}:${key}`, label: `${string(bucket.limitName) ?? id} · ${durationLabel(duration, key)}`, usedPercent: numeric(window.usedPercent), windowDurationMins: duration, resetsAt: date(window.resetsAt, true), scope });
     }
     // Usage-based workspaces (e.g. enterprise_cbp_usage_based) report a monthly credit allowance instead of windows.
     const spend = object(bucket.individualLimit);
@@ -46,10 +49,10 @@ export function parseCodexUsage(payload: unknown): CollectedUsage {
       const limit = amount(spend.limit);
       const used = amount(spend.used);
       windows.push({ id: `${id}:individual`, label: `${string(bucket.limitName) ?? id} · monthly credits`, usedPercent: 100 - Math.min(100, remaining), windowDurationMins: null, resetsAt: date(spend.resetsAt, true),
-        detail: limit !== null && used !== null ? `${credits(Math.max(0, limit - used))} of ${credits(limit)} credits left` : null });
+        detail: limit !== null && used !== null ? `${credits(Math.max(0, limit - used))} of ${credits(limit)} credits left` : null, scope });
     }
   }
-  return { identityKey: string(root.accountId), plan, windows };
+  return { identityKey: string(root.accountId), plan, windows, usageAllowed: typeof root.ordinaryUsageAllowed === "boolean" ? root.ordinaryUsageAllowed : null };
 }
 
 export function parseClaudeUsage(payload: unknown): CollectedUsage {
@@ -61,7 +64,8 @@ export function parseClaudeUsage(payload: unknown): CollectedUsage {
     if (value !== null && !row) continue;
     const weekly = key !== "five_hour";
     const suffix = key.slice("seven_day_".length).replaceAll("_", " ");
-    windows.push({ id: key, label: !weekly ? "5 hours" : key === "seven_day" ? "Weekly" : `Weekly · ${suffix}`, usedPercent: numeric(row?.utilization), windowDurationMins: weekly ? 10080 : 300, resetsAt: date(row?.resets_at) });
+    windows.push({ id: key, label: !weekly ? "5 hours" : key === "seven_day" ? "Weekly" : `Weekly · ${suffix}`, usedPercent: numeric(row?.utilization), windowDurationMins: weekly ? 10080 : 300, resetsAt: date(row?.resets_at),
+      scope: key === "five_hour" || key === "seven_day" ? "account" : "model" });
   }
   if (Array.isArray(root.limits)) for (const [index, value] of root.limits.entries()) {
     const row = object(value);
@@ -71,7 +75,7 @@ export function parseClaudeUsage(payload: unknown): CollectedUsage {
     const surface = object(scope?.surface);
     const labels = [string(model?.display_name) ?? string(scope?.model), string(surface?.display_name) ?? string(scope?.surface)].filter((s): s is string => !!s);
     if (!labels.length) continue;
-    windows.push({ id: `weekly_scoped:${index}`, label: `Weekly · ${labels.join(" · ")}`, usedPercent: numeric(row.percent), windowDurationMins: 10080, resetsAt: date(row.resets_at) });
+    windows.push({ id: `weekly_scoped:${index}`, label: `Weekly · ${labels.join(" · ")}`, usedPercent: numeric(row.percent), windowDurationMins: 10080, resetsAt: date(row.resets_at), scope: "model" });
   }
   // Enterprise seats report a monthly spend allowance; amounts are in minor units of `currency`.
   const extra = object(root.extra_usage);
@@ -82,7 +86,7 @@ export function parseClaudeUsage(payload: unknown): CollectedUsage {
     const currency = string(extra.currency) ?? "USD";
     const money = (value: number) => { try { return (value / scale).toLocaleString("en-US", { style: "currency", currency }); } catch { return `${(value / scale).toFixed(2)} ${currency}`; } };
     const spend: UsageWindow = { id: "extra_usage", label: "Monthly spend", usedPercent: numeric(extra.utilization) ?? (used === null ? null : used / limit * 100), windowDurationMins: null, resetsAt: null,
-      detail: used === null ? null : `${money(Math.max(0, limit - used))} of ${money(limit)} left` };
+      detail: used === null ? null : `${money(Math.max(0, limit - used))} of ${money(limit)} left`, scope: "spend" };
     // Without any plan limits the empty plan rows are noise; the spend allowance is the only quota.
     return { identityKey: null, plan: null, windows: windows.some((quota) => quota.usedPercent !== null) ? [...windows, spend] : [spend] };
   }

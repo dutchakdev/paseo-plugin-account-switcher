@@ -11,12 +11,12 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 ![Accounts in Paseo: two Claude accounts with their 5-hour and weekly limits and the start of a Codex account. Personal details are redacted.](docs/assets/accounts.png)
 
 - **Sign in from Paseo.** Add an account, finish the official provider sign-in, and return to your chat.
-- **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. Changes apply only when you choose **Apply**.
+- **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. Changes apply only when you choose **Apply** or type `/account name`.
 - **Keep your setup.** Profiles separate credentials while sharing provider settings, skills, and session history.
 - **Track account limits.** See used and remaining percentages, reset times, and freshness for every reported window.
 - **Switch from the keyboard.** Type `/account work` in a chat, or pick **Make “Work” the Codex default** in the Command Center (⌘K).
-- **See it in the chat.** A line in the chat records each applied switch, and why a new agent did not start on the default.
-- **Use a default.** Choose the account used by new agents for each provider. When the limits show it would fail, a new agent starts on the account with the most room instead.
+- **See it in the chat.** A line in the chat records applied switches, and why a new agent did not start on the default.
+- **Use a default.** Choose the account used by new agents for each provider. When the latest limits show it would fail, a new agent starts on another signed-in account instead.
 
 ## Requirements
 
@@ -83,13 +83,16 @@ The **⋯** menu contains refresh, check sign-in, default, sign-in, rename, and 
 
 ### Default for new agents
 
-A new Claude or Codex agent starts on its provider's default account. It starts on another signed-in account of the same provider only when the default would certainly fail:
+A new Claude or Codex agent starts on its provider's default account. It starts on another signed-in account of the same provider only when the provider's own data shows the default would fail:
 
-- a limit window of the default is at 100% and has not reset yet;
-- for Codex, the default's plan does not offer the model chosen for the agent;
-- the default needs sign-in.
+- an account-wide limit of the default, such as the 5-hour or weekly window, is at 100% and its reset time is still ahead. Limits of a single model, such as a weekly Opus limit, and extra paid usage do not count, and a full window without a reset time proves nothing;
+- for Codex, the latest reading says ordinary usage is not allowed;
+- for Codex, the latest reading of the default's plan does not offer the model chosen for the agent. This needs a model chosen explicitly at creation and listed by at least one account; aliases resolved later by Paseo are not checked;
+- the official sign-in check says the default needs sign-in, or cannot confirm it.
 
-The replacement is the account with the most room in its tightest window; accounts without limit data come after the measured ones. If every account is used up, the agent starts on the default, as before. Choosing an account for a chat yourself always takes precedence. This uses the last limits the plugin read, so creating an agent never waits for a provider, and it changes nothing when no default is set.
+The replacement is the account with the largest percentage left in its tightest account-wide window; accounts without limit data come after the measured ones. Percentages do not compare the size of different plans. If every account is ruled out, the agent starts on the default, as before. Choosing an account for a chat yourself always takes precedence, and nothing changes when no default is set.
+
+Limits come from the plugin's last reading, so creating an agent does not wait for a provider's limits. It does run the official sign-in check for the default, and for each further account it tries.
 
 Before signing in again, switch agents away from that profile. To remove a managed account, clear its default and all current or pending selections first. Removal asks for confirmation. **Archived agents retain their account binding for resume**; restore and switch them before removing the account. **Current CLI** accounts cannot be removed.
 
@@ -103,7 +106,7 @@ Before signing in again, switch agents away from that profile. To remove a manag
 
 ### From the keyboard
 
-Type `/account` in the message field followed by an account name, or `default` for the provider's default account. Names match without regard to case, and a unique beginning is enough: `/account sec` finds **Second**. Several matches or none report the accounts to choose from.
+Type `/account` in the message field followed by an account name, or `default` for the provider's default account. An account literally named **Default** takes precedence over the keyword. Names match without regard to case, and a unique beginning is enough: `/account sec` finds **Second**. Several matches or none report the accounts to choose from.
 
 - When the agent is idle and nothing warns against the switch, `/account` applies it at once.
 - While the agent is responding, or when the account's plan does not offer the agent's model, the account is selected and the switcher opens, where **Apply** and the warning are visible.
@@ -116,9 +119,9 @@ The Command Center (⌘K) lists **Make “name” the Claude default** and **Mak
 The chat records the account in a quiet line:
 
 - after an applied switch: *Account switched from Work to Second.*
-- when a new agent did not start on the default: *Started on Second: the default Work has used up a limit.* The other reasons are a plan without the agent's model and a default that needs sign-in.
+- when a new agent did not start on the default: *Starting on Second: the default Work has used up a limit.* The other reasons are a plan without the agent's model, a default that needs sign-in, and a default whose sign-in could not be checked. The line is written as the agent is created, before its CLI confirms the launch.
 
-These lines live in the daemon's memory, like other plugin timeline rows: they stay through reconnects and refetches, but not a daemon restart.
+These lines live in the daemon's memory, like other plugin timeline rows: they stay through reconnects and refetches, but not a daemon restart. They are best effort: when the host refuses a line, the switch still stands and the plugin log records why.
 
 You can select an account during a response, but it is **never applied automatically**. **Cancel selection** clears it. **All accounts** opens the full account list.
 

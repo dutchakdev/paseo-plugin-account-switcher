@@ -121,7 +121,7 @@ export class AccountController {
     this.credentialProofs.delete(id);
     const quota=this.toQuotaAccount(account,state);
     // An idle account's token expires with no CLI running to renew it. Renew before the proof, so it covers the new token.
-    if(account.provider==="claude"&&Date.now()-(this.renewals.get(id)??-Infinity)>=RENEWAL_INTERVAL&&await renewExpiredClaudeToken(quota))this.renewals.set(id,Date.now());
+    if(account.provider==="claude"&&Date.now()-(this.renewals.get(id)??-Infinity)>=RENEWAL_INTERVAL&&await renewExpiredClaudeToken(quota)){this.renewals.set(id,Date.now());console.log(`Asked the Claude CLI to renew the expired access token of account ${id}.`);}
     for(let attempt=0;;attempt++){
      const before=await readCredentialVersion(quota);
      identity=await probeAccount(account,state);

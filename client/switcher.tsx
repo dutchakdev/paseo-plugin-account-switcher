@@ -108,7 +108,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
           const latest = (await agent.refresh())?.agent;
           cache.setQueryData(agentKey, latest ?? null);
           if (!idleForSwitch(latest)) throw new Error("The agent is now busy. Wait for the turn to finish, then apply your selection again.");
-          await apply({ agentId });
+          await apply({ agentId, accountId: pending.id });
         })}>{switching || action.isPending ? "Please wait…" : `Apply “${pending.label}”`}</Button>
         <Button theme={theme} variant="ghost" disabled={action.isPending || switching} onPress={() => action.run(() => prepare({ agentId, accountId: null }))}>Cancel selection</Button>
       </View>

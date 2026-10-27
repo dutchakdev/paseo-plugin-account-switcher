@@ -2,12 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 
 const controller = vi.hoisted(() => {
   const bindNewAgent = vi.fn(async (..._args: unknown[]): Promise<unknown> => undefined);
-  const apply = vi.fn(async () => ({ agentId: "agent-1", currentAccountId: "second" }));
-  const registry = { accounts: [{ id: "work", label: "Work" }, { id: "second", label: "Second" }], bindings: [{ agentId: "agent-1", currentAccountId: "work" }] };
+  const apply = vi.fn(async (agentId: string) => ({ agentId, provider: "codex", currentAccountId: "second" }));
+  const registry = {
+    accounts: [{ id: "system-codex", label: "Current CLI · Codex", source: "system", provider: "codex" }, { id: "work", label: "Work", source: "managed", provider: "codex" }, { id: "second", label: "Second", source: "managed", provider: "codex" }],
+    bindings: [{ agentId: "agent-1", currentAccountId: "work" }],
+  };
+  const read = vi.fn(async () => registry);
   return {
-    bindNewAgent, apply,
+    bindNewAgent, apply, read, registry,
     instance: { ready: Promise.resolve(), ensureRuntime: vi.fn(async () => {}), switcher: () => ({ bindNewAgent, apply }), close: vi.fn(async () => {}),
-      observeAgentRegistration: vi.fn(), store: { read: async () => registry }, usage: { refresh: vi.fn(async () => []) } },
+      observeAgentRegistration: vi.fn(), store: { read }, usage: { refresh: vi.fn(async () => []) } },
   };
 });
 vi.mock("../server/controller", () => ({ AccountController: function AccountController() { return controller.instance; } }));
@@ -80,5 +84,22 @@ describe("account notes in the timeline", () => {
     await handlers.get("switch.apply")!({ agentId: "agent-1" }, { paseo });
     await vi.waitFor(() => expect(appended).toHaveLength(1));
     expect(appended[0].item.data).toEqual({ kind: "switched", from: "Work", to: "Second", reason: null });
+  });
+});
+
+describe("notes never decide whether a switch succeeded", () => {
+  it("names the Current CLI account on an agent's first switch, which has no binding yet", async () => {
+    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
+    await handlers.get("switch.apply")!({ agentId: "agent-new" }, { paseo });
+    await vi.waitFor(() => expect(appended).toHaveLength(1));
+    expect(appended[0].item.data).toMatchObject({ from: "Current CLI · Codex", to: "Second" });
+  });
+  it("returns the applied switch when reading labels for its note fails", async () => {
+    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
+    controller.read.mockRejectedValue(new Error("registry busy"));
+    try {
+      await expect(handlers.get("switch.apply")!({ agentId: "agent-1" }, { paseo })).resolves.toMatchObject({ currentAccountId: "second" });
+      expect(appended).toEqual([]);
+    } finally { controller.read.mockImplementation(async () => controller.registry); }
   });
 });
