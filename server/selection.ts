@@ -4,8 +4,8 @@ export type SelectionAccount = { id: string; authStatus: string; loginToken?: st
 export type Blocker = "exhausted" | "model";
 
 // Only limits that stop every request of the account count; a model's own week or extra paid usage do not.
-const binding = (window: UsageWindow) => window.scope === "account";
-const inEffect = (window: UsageWindow, now: number) => !window.resetsAt || Date.parse(window.resetsAt) > now;
+export const binding = (window: UsageWindow) => window.scope === "account";
+export const inEffect = (window: UsageWindow, now: number) => !window.resetsAt || Date.parse(window.resetsAt) > now;
 
 /** Why an account would certainly fail a new agent, from provider-reported data only; null when nothing proves it.
  * A full window proves it only with a known future reset: within a window, use only grows until the reset.
