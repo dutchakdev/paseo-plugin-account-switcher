@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Paseo's Usage view lists your signed-in accounts under the source **Account Switcher**, with each plan and limit window. It shows the readings the plugin already has and sends no provider request. The **Current CLI** accounts are not listed again, since Paseo's own cards show them. Accounts that need sign-in or are in the middle of one are left out.
+- When a turn fails because its account's limit is used up, the chat shows a row: *Work's limit is used up until 18:00.* and a button, **Switch to Second and continue**, or *No other account has room.* The plugin decides this from the account's limits, read again after the failure, never from the error text, so other failures add nothing. The button switches with the usual checks (the agent is idle, no permission request is pending), sends the agent **Continue.**, and the row reports the outcome or the reason the switch failed. Agents on **Current CLI** are included. Nothing is offered while account switching is off for the provider.
+- **When a limit runs out during a chat**, a setting under each provider with more than one account in Accounts: **Offer a switch** (the default) or **Switch automatically**. Automatic switching happens once per failed turn, at most three times an hour for a chat, and never back to an account the chat left within that hour; otherwise the chat shows the usual offer.
+
+### Changed
+
+- Accounts is registered with Paseo's screen API (`addScreen`, `addSidebarHeaderItem`) where the app has it, and with the older surface API where it does not. It looks and behaves the same.
+- The development SDK is Paseo 0.11.4, the oldest supported release, instead of 0.8.0, so the typecheck now covers only the API that every supported Paseo has. The bundled launcher includes the reviewed 0.11.4 license text.
+
+### Fixed
+
+- Paseo's usage popover for an agent on a managed account showed the limits of the default login. The plugin now puts the account's profile directory in the agent's session environment, so the popover shows the account the agent runs on. This applies while account switching is on for the provider; agents on **Current CLI** are unchanged.
+
 ## 0.7.1 - 2026-10-27
 
 ### Changed

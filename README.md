@@ -14,6 +14,8 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 - **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. Changes apply only when you choose **Apply** or type `/account name`.
 - **Keep your setup.** Profiles separate credentials while sharing provider settings, skills, and session history.
 - **Track account limits.** See used and remaining percentages, reset times, and freshness for every reported window.
+- **See them in Paseo's own usage.** Signed-in accounts appear in Paseo's Usage view, and an agent's usage popover shows the account that agent runs on.
+- **Carry on when a limit runs out.** When a turn fails because its account's limit is used up, the chat offers a switch to an account with room and continues there. Switching automatically is opt-in.
 - **Switch from the keyboard.** Type `/account work` in a chat, or pick **Make “Work” the Codex default** in the Command Center (⌘K).
 - **See it in the chat.** A line in the chat records applied switches, and why a new agent did not start on the default.
 - **Use a default.** Choose the account used by new agents for each provider. When the latest limits show it would fail, a new agent starts on another signed-in account instead.
@@ -29,7 +31,7 @@ The interface is in English. Reset dates use the viewing device's local time zon
 
 ## Install
 
-Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude and Codex sign-ins to identify accounts and check their limits, and it sends no model messages. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
+Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude and Codex sign-ins to identify accounts and check their limits, and checking limits sends no model messages. The only message it sends to an agent is **Continue.**, after a switch that followed a used-up limit. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
 
 On Paseo 0.11.0 or a later release, including 0.12, 0.13 and 0.14, install the reviewed version from the plugin directory:
 
@@ -54,7 +56,7 @@ To review or change the source first, install a [local checkout](docs/installati
 ## First run
 
 1. In Paseo, turn on **Settings → Plugins → Enable plugins**.
-2. Check that `paseo plugin ls account-switcher` shows **running**, then open **Accounts** in the sidebar or **Accounts and limits** in the Command Center.
+2. Check that `paseo plugin ls account-switcher` shows **running**, then open **Accounts** in the sidebar or **Accounts and limits** in the Command Center. An app without Paseo's current screen API shows the same Accounts through the older surface API.
 3. Accounts lists the sign-ins your daemon already uses as **Current CLI · Claude** and **Current CLI · Codex**. A provider without its CLI has no Current CLI entry.
 4. Select **Enable** in Accounts. This is separate from Paseo's plugin switch: the plugin saves your original Claude and Codex commands and points Paseo at its launchers. It leaves running chats alone, and **Disable** restores the original commands.
 
@@ -120,7 +122,7 @@ The Command Center (⌘K) lists **Make “name” the Claude default** and **Mak
 
 The chat records the account in a quiet line:
 
-- after an applied switch: *Account switched from Work to Second.*
+- after an applied switch: *Account switched from Work to Second.* A switch made from a [failover row](#when-a-limit-runs-out-during-a-chat) is reported on that row instead.
 - when a new agent did not start on the default: *Starting on Second: the default Work has used up a limit.* The other reasons are a plan without the agent's model, a default that needs sign-in, and a default whose sign-in could not be checked. The line is written as the agent is created, before its CLI confirms the launch.
 
 These lines live in the daemon's memory, like other plugin timeline rows: they stay through reconnects and refetches, but not a daemon restart. They are best effort: when the host refuses a line, the switch still stands and the plugin log records why.
@@ -132,6 +134,19 @@ Apply reloads the agent through Paseo while preserving its native session ID. Th
 Plans differ in the models they offer. A free ChatGPT plan, for example, refuses a model that only paid plans have, and the agent's next message fails with `model_not_found`. For Codex, the plugin reads each account's models with its limits; when the selected account's plan does not offer the agent's model, the dialog says so before **Apply** and lists the models it does offer. Claude does not report its models this way, so the dialog shows no such warning for Claude.
 
 Different agents can use different accounts in parallel. Avoid sending from another client during Apply: Paseo's native reload has no atomic lock against a concurrent message, which could be interrupted.
+
+## When a limit runs out during a chat
+
+When a Claude or Codex turn fails, the plugin reads the agent's account again. The chat gets a row only if that reading proves the account is used up: an account-wide limit such as the 5-hour or weekly window is at 100% with its reset still ahead, or Codex reports that ordinary usage is not allowed. Other failures, such as a network error, a tool failure, a plan without the agent's model, or a limit of a single model, add nothing.
+
+- With another account available: *Work's limit is used up until 18:00.* and a button **Switch to Second and continue**. The time is the latest reset among the used-up windows, in your local time zone; without a reset time from the provider, the sentence ends at *used up*.
+- Without one: *Work's limit is used up until 18:00. No other account has room.*
+
+The offered account is the one a new agent would try instead: a signed-in account of the same provider, not in the middle of a sign-in, not used up, and for Codex with a plan that offers the agent's model. If several qualify, the one with the most room is offered. Agents on **Current CLI** are included. Nothing is offered while account switching is off for that provider (**Enable** in Accounts).
+
+The button switches the chat through the same checks as **Apply** and `/account` (the agent is idle, no permission request is pending, the new account is confirmed at startup), then sends the agent **Continue.** The row follows: *Switching from Work to Second…*, then *Switched from Work to Second.* If the switch is refused or fails, the row says *Could not switch to Second* with the reason, and, as with **Apply**, the plugin tries to restore the previous account.
+
+To skip the click, set **When a limit runs out during a chat** to **Switch automatically** under a provider in Accounts. The control appears for a provider with more than one account, and the default is **Offer a switch**. The chat then switches and continues by itself, and the row reads *Switched automatically from Work to Second.* The plugin limits this to one automatic switch per failed turn and three per agent per hour, and never moves an agent back to an account it left within that hour; when a limit stops it, the chat shows the usual offer instead. Like the other chat lines, these rows live in the daemon's memory and are best effort.
 
 ## Read limits
 
@@ -145,6 +160,14 @@ Each account shows all reported limit windows, including zero usage. Measured wi
 
 Monitoring sends no model messages. The official CLIs own authentication and token refresh; a native Codex limits request may refresh its token. A Claude access token expires when no Claude session uses the account for several hours. Before a limits check finds it expired, the plugin runs `claude -p /usage --no-session-persistence` under that account, at most every 10 minutes. This local command lets the CLI renew the token, with no model message and no saved session. **Sign in again** appears only when the CLI cannot renew it. See [monitor details](server/usage/README.md) for scheduling, identity verification, and cache behavior.
 
+### In Paseo's usage
+
+The plugin also reports to Paseo's own Usage view, as the source **Account Switcher**. A daemon without usage sources skips this; Accounts shows the same limits.
+
+- It lists each managed account that is signed in, with its plan and limit windows. It leaves out the **Current CLI** accounts, which Paseo's own cards already show, any account signed in as the same login as its provider's **Current CLI** account, and accounts that need sign-in or are in the middle of one.
+- It shows the plugin's last reading and sends no request to a provider when you open the view. A reading marked stale in Accounts shows its last values in Paseo's view without the mark.
+- An agent bound to a managed account gets that account's profile directory in its session environment, so Paseo's usage popover for the agent reads the account the chat really runs on. The environment is set each time the agent's session opens (a new chat, a resume, or a switch), and only while account switching is on for the provider. Agents on **Current CLI** are unchanged and show the login Paseo uses by default.
+
 ## Update or remove
 
 Plugin directory, npm, and Git installations update with `paseo plugin update account-switcher`, which shows the new revision and asks for approval.
@@ -153,7 +176,7 @@ Before disabling or removing the plugin, select **Disable** in Accounts to resto
 
 ## Scope
 
-This project supports manual, same-provider switching with subscription accounts. Automatic account rotation, API-key authentication, and Claude-to-Codex transfers are outside its scope. Provider authentication and limit formats can change with CLI versions; unsupported data is shown as unavailable.
+This project supports same-provider switching with subscription accounts. Switching is manual, except for the opt-in automatic switch after a turn failed on a used-up limit. Rotating accounts to spread usage, API-key authentication, and Claude-to-Codex transfers are outside its scope. Provider authentication and limit formats can change with CLI versions; unsupported data is shown as unavailable.
 
 Automated tests cover the implementation with synthetic accounts and provider responses. They do not establish real A → B → A switching, compaction, child-session behavior, or rewind for your accounts. Recorded checks and remaining live verification are in [verification](docs/verification.md).
 

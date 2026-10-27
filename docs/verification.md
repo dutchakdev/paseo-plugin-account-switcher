@@ -1,6 +1,6 @@
 # Verification
 
-Last checked: **2026-10-08**. These results describe observed checks, not a guarantee
+Last checked: **2026-10-27**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
 
 ## Automated checks
@@ -54,6 +54,43 @@ texts. Rebuilding from a different working directory produced identical output.
 The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
+
+## Development SDK 0.11.4, Paseo usage and failover — 2026-10-27
+
+- The development SDK (`@getpaseo/client`, `@getpaseo/plugin`, `@getpaseo/protocol`)
+  moved from 0.8.0 to **0.11.4**, the oldest supported Paseo. Typechecking against it
+  shows the plugin uses only API that 0.11 has. The entries below that say the SDK
+  is pinned to 0.8.0 describe the pin at their dates.
+- The launcher bundles `defineRpc` from `@getpaseo/plugin`, so its license was
+  reviewed again. `licenses/paseo-0.8.0.txt` became `licenses/paseo-0.11.4.txt`
+  with no change to the text; the commit that moved the pin records the upstream
+  `v0.11.4` LICENSE as identical to the one reviewed for 0.8.0. `scripts/build.mjs`
+  accepts only `@getpaseo/plugin` 0.11.4 with that file, and the notices cite the
+  `v0.11.4` commit. The build still fails for any other bundled version or a
+  changed license text.
+- `npm run check` on macOS (arm64) with Node.js **22.23.0**, TypeScript **7.0.2**
+  and Vitest **5.0.5** passed: the launcher build (522,796 bytes, three third-party
+  licenses, `server/launcher-artifact.ts` unchanged by the rebuild), typecheck with
+  no errors, and **429/429 tests** in 38 files.
+- `node scripts/release.mjs check` passed. `npm pack` produced a 55-file tarball
+  and `node scripts/check-package.mjs` reported it as expected: required files,
+  the manifest without build commands, no install command in either overview, and
+  the shrinkwrap. The tarball was removed afterwards.
+- New tests cover the session environment (`tests/session-env.test.ts`), the
+  usage source's discovery, keys and report mapping (`tests/paseo-usage.test.ts`),
+  the failover decision and its hourly guard (`tests/failover.test.ts`), the hooks
+  that wire them (`tests/server-hooks.test.ts`), screen registration on stand-in
+  apps with and without the new API (`tests/ui-screens.test.ts`), and the failover
+  row and its setting (`tests/failover-row.test.ts`, `tests/ui-failover-row.test.ts`,
+  `tests/ui-failover-setting.test.ts`). They use stand-in daemon and app objects; no
+  Paseo daemon or app was started for them.
+- The 0.13 entry below says the plugin listens only to `agent.created`. It now also
+  listens to `agent.turn_ended` for failover, and reads only `agent`, `turnId` and
+  `outcome` from it, not the `timeline` that 0.13 leaves empty.
+- Not yet checked live: an agent on a managed account showing that account in
+  Paseo's usage popover, the Usage view listing each managed account once, and a
+  used-up reading producing the failover row and its switch. They are listed under
+  Remaining live acceptance.
 
 ## Paseo 0.14 compatibility — 2026-10-27
 
@@ -236,6 +273,15 @@ Checked with an isolated Paseo **0.8.0** daemon, Claude Code **2.1.259**, and Co
 
 ## Remaining live acceptance
 
+- In a Paseo 0.11 or later app on a real daemon: an agent on a managed account
+  shows that account in Paseo's usage popover, and the Usage view lists each
+  managed account once and none of the **Current CLI** accounts twice. Paseo may
+  also read `CLAUDE_CONFIG_DIR` for settings or session files; a managed home links
+  those directories to the source home, so check that a chat on a managed account
+  behaves as before.
+- A failed turn on a really used-up account (or a forced reading) produces the
+  failover row, the button switches and sends **Continue.**, and automatic
+  switching does the same with the setting on. Include an agent on **Current CLI**.
 - Two distinct authenticated accounts for **each** provider, concurrent agents,
   and A → B → A within the same chat.
 - Comparing every reported quota with the provider's own display, including
