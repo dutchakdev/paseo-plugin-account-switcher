@@ -5,7 +5,7 @@ import type { Account, AccountState } from "../shared/contracts";
 const account = (id: string, label: string, provider: "claude" | "codex" = "codex", extra: Partial<Account> = {}): Account =>
   ({ id, provider, label, source: "managed", email: null, plan: null, authStatus: "ready", createdAt: "2026-10-27T00:00:00Z", ...extra });
 const state = (accounts: Account[], defaults = { claude: null, codex: null } as AccountState["defaults"]): AccountState => ({
-  accounts, bindings: [], defaults, fallback: { claude: true, codex: true }, integration: { enabled: true, error: null },
+  accounts, bindings: [], defaults, fallback: { claude: true, codex: true }, autoFailover: { claude: false, codex: false }, integration: { enabled: true, error: null },
   providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
 });
 const accounts = [account("cli", "Current CLI · Codex", "codex", { source: "system" }), account("work", "Work"), account("workshop", "Workshop"), account("second", "Second"), account("claude", "Work", "claude")];

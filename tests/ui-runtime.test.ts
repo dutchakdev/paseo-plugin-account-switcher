@@ -19,7 +19,7 @@ const state: AccountState = {
     { id: "account-2", provider: "claude", source: "managed", label: "Team", authStatus: "ready", email: null, plan: null, createdAt: "2026-09-15" },
   ],
   bindings: [{ agentId: agent.id, provider: "claude", currentAccountId: "system-claude", pendingAccountId: "account-2", status: "ready", error: null }],
-  defaults: { claude: null, codex: null }, fallback: { claude: true, codex: true }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
+  defaults: { claude: null, codex: null }, fallback: { claude: true, codex: true }, autoFailover: { claude: false, codex: false }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
 };
 
 function harness(listResult: Promise<unknown> = Promise.resolve(page), accountState = state) {

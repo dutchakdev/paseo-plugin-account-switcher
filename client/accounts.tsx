@@ -1,9 +1,9 @@
 import { useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { addAccount, cancelLogin, checkLogin, cliName, missingCli, refreshUsage, removeAccount, renameAccount, setDefaultAccount, setFallback, setIntegration, startLogin,
+import { addAccount, cancelLogin, checkLogin, cliName, missingCli, refreshUsage, removeAccount, renameAccount, setAutoFailover, setDefaultAccount, setFallback, setIntegration, startLogin,
   type Account, type AccountState, type LoginSession, type Provider, type UsageSnapshot } from "../shared/contracts";
-import { body, Button, Field, heading, IconButton, InlineAction, muted, Notice, QuotaSummary, row, Segmented, StatusDot, toneColor } from "./components";
+import { body, Button, Field, heading, IconButton, InlineAction, muted, Notice, QuotaSummary, row, Segmented, StatusDot, toneColor, type ThemeProps } from "./components";
 import { useAccountsData, useAction, useNow } from "./data";
 import { accountStatus, errorMessage, providerName } from "./format";
 import { accountAvailable, addOrResumeLogin, type LoginMode } from "./login";
@@ -148,6 +148,21 @@ function AddAccountForm({ theme, host, onChanged, initialProvider, options, onCl
   </View>;
 }
 
+/** Whether a chat whose turn ran out of its account's limit offers a switch or makes it. `run` is the screen's action lock. */
+export function AutoFailoverSetting({ theme, provider, enabled, disabled, run }: ThemeProps & {
+  provider: Provider; enabled: boolean; disabled: boolean; run(action: () => Promise<unknown>): void;
+}) {
+  const save = useRpc(setAutoFailover);
+  return <View style={{ gap: 4 }}>
+    <Segmented theme={theme} label="When a limit runs out during a chat" value={enabled ? "auto" : "offer"} disabled={disabled}
+      onChange={(value) => run(() => save({ provider, enabled: value === "auto" }))}
+      options={[{ value: "offer", label: "Offer a switch" }, { value: "auto", label: "Switch automatically" }]} />
+    <Text style={muted(theme)}>{enabled
+      ? "When a turn fails because its account's limit is used up, the chat moves to another signed-in account and continues, at most three times an hour."
+      : "When a turn fails because its account's limit is used up, the chat offers to move to another signed-in account."}</Text>
+  </View>;
+}
+
 export function AccountsSurface(props: AccountsProps) {
   const { theme, layout, host, runtimeError, onChanged } = props;
   const { accounts, usage } = useAccountsData(host.id);
@@ -204,6 +219,7 @@ export function AccountsSurface(props: AccountsProps) {
             ? "A new agent starts on another signed-in account when the latest limits show the default would fail."
             : "New agents always start on the default, even when its limits are used up."}</Text>
         </View> : null}
+        {group.length > 1 ? <AutoFailoverSetting theme={theme} provider={provider} enabled={state.autoFailover[provider]} disabled={action.isPending} run={action.run} /> : null}
         {!status.available ? <Notice theme={theme}>{missingCli(provider)}</Notice>
           : enabled && !status.integrated ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <View style={{ flex: 1, minWidth: 200 }}><Notice theme={theme} tone="warning">Account switching is off for {cliName[provider]}: its agents use the system CLI.</Notice></View>

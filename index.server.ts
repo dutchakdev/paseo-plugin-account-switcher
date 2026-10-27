@@ -1,14 +1,22 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import * as rpc from "./shared/contracts";
 import { AccountController } from "./server/controller";
+import { AutoFailoverGuard, failoverDecision } from "./server/failover";
+import type { PaseoApi } from "./server/paseo-api";
 import { registerPaseoUsage } from "./server/paseo-usage";
 import { profileEnv } from "./server/session-env";
-import { accountFrom } from "./server/store";
-import { appendAccountNote } from "./server/timeline";
+import { accountFrom, type Registry } from "./server/store";
+import { appendAccountNote, appendFailoverRow } from "./server/timeline";
+import { FAILOVER_KIND, type FailoverRow } from "./shared/failover";
 import type { AccountNote } from "./shared/timeline";
 
 // Paseo hands `agent.create`'s environment to the same agent's first `agent.session_open`, which alone knows the agent ID.
 const MODEL_ENV="PASEO_ACCOUNT_SWITCHER_MODEL";
+// The prompt that resumes an agent's work on the account it was switched to.
+const CONTINUE="Continue.";
+const reason=(error:unknown)=>error instanceof Error?error.message:String(error);
+// An agent without a binding runs on its provider's Current CLI account; null while a binding's account is unconfirmed.
+const currentAccountOf=(state:Registry,agentId:string,provider:string)=>{const bound=state.bindings.find(b=>b.agentId===agentId);return bound?bound.currentAccountId:state.accounts.find(a=>a.source==="system"&&a.provider===provider)?.id??null;};
 
 export default function contribute(server:PluginServerContext){
  const controller=new AccountController();
@@ -49,6 +57,35 @@ export default function contribute(server:PluginServerContext){
   }
   return binding;
  });
+ const guard=new AutoFailoverGuard();
+ // Applies a failover row's switch the way `/account` does: the same service checks the account, that the agent is idle
+ // and has no pending permission, and the launch receipt. The row, not a separate note, tells the outcome, and a refusal
+ // is shown there before it is rethrown.
+ const switchOver=async(paseo:PaseoApi,agentId:string,row:FailoverRow,toId:string,done:"switched"|"auto")=>{
+  await appendFailoverRow(paseo,agentId,{...row,state:"switching",error:null});
+  try{
+   await controller.ensureRuntime(paseo);
+   const switcher=controller.switcher(paseo);
+   await switcher.prepare(agentId,toId);
+   await switcher.apply(agentId,toId);
+  }catch(error){await appendFailoverRow(paseo,agentId,{...row,state:"failed",error:reason(error)});throw error;}
+  void controller.usage.refresh(toId).catch(()=>{});
+  await appendFailoverRow(paseo,agentId,{...row,state:done,error:null});
+  // The switch stands even if the prompt is not delivered; the chat is idle on the new account either way.
+  await paseo.agents.ref(agentId).send(CONTINUE).catch(error=>console.error(`Could not ask agent ${agentId} to continue on the new account: ${reason(error)}`));
+ };
+ server.handle(rpc.setAutoFailover,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.autoFailover[provider]=enabled;});return{};});
+ server.handle(rpc.applyFailover,async({agentId,accountId,rowId},{paseo})=>{
+  // Only this agent's own failover row may be rewritten with the outcome.
+  if(!rowId.startsWith(`${FAILOVER_KIND}-${agentId}-`))throw new Error("The switch offer belongs to another agent.");
+  await controller.ready;
+  const state=await controller.store.read(),target=state.accounts.find(a=>a.id===accountId);
+  // Named at the click: the account the agent leaves now.
+  const from=target?labelOf(state,currentAccountOf(state,agentId,target.provider)):null;
+  if(!target||!from)throw new Error("Account not found.");
+  await switchOver(paseo,agentId,{rowId,state:"offered",from,to:target.label,toId:target.id,resetsAt:null,error:null},target.id,"switched");
+  return{};
+ });
  server.handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
  server.handle(rpc.listUsage,async({visible},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.list({visible})};});
  server.handle(rpc.refreshUsage,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.refresh(accountId)};});
@@ -82,5 +119,35 @@ export default function contribute(server:PluginServerContext){
   if(pending)void appendAccountNote(paseo,agent.id,pending.note);
   await controller.observeAgentRegistration(agent.id);
  });
- return async()=>{removeCreate();removeHook();removeCreated();startNotes.clear();await controller.close();};
+ // Paseo does not say why a turn failed. The evidence is the plugin's own reading of the agent's account, taken again now:
+ // a used-up account gets one row per failed turn, any other failure is left alone.
+ const removeTurnEnded=server.on("agent.turn_ended",async({agent,turnId,outcome},{paseo})=>{
+  const provider=agent.provider;
+  if(outcome.kind!=="failed"||(provider!=="claude"&&provider!=="codex"))return;
+  try{
+   await controller.ready;
+   const state=await controller.store.read();
+   // Without that provider's launcher the CLI runs on the system login, so a switch could not take effect.
+   if(!state.integration.enabled||!state.integration.providers.includes(provider))return;
+   const fromId=currentAccountOf(state,agent.id,provider),from=labelOf(state,fromId);
+   if(!fromId||!from)return;
+   // A full window read earlier still counts until its reset, so the account is read again before deciding.
+   const [usage,snapshot]=await Promise.all([controller.usage.refresh(fromId),paseo.agents.ref(agent.id).refresh().catch(()=>null)]);
+   const model=snapshot?.agent.runtimeInfo?.model||snapshot?.agent.model||null,now=Date.now();
+   const decision=failoverDecision({currentId:fromId,accounts:state.accounts.filter(a=>a.provider===provider),usage,model,now});
+   if(!decision)return;
+   const rowId=`${FAILOVER_KIND}-${agent.id}-${turnId??now}`;
+   const offer=decision.kind==="offer"?state.accounts.find(a=>a.id===decision.toId):undefined;
+   const row:FailoverRow={rowId,state:offer?"offered":"none",from,to:offer?.label??null,toId:offer?.id??null,resetsAt:decision.resetsAt,error:null};
+   if(row.toId&&state.autoFailover[provider]&&guard.allow(agent.id,rowId,fromId,row.toId,now)){
+    // Recorded before the first await of the switch: the guard's check and record must not be split.
+    guard.record(agent.id,rowId,fromId,row.toId,now);
+    // The switch reloads the agent and waits for its launch, longer than Paseo waits for a hook; the row reports it.
+    void switchOver(paseo,agent.id,row,row.toId,"auto").catch(error=>console.error(`Could not switch agent ${agent.id} automatically: ${reason(error)}`));
+    return;
+   }
+   await appendFailoverRow(paseo,agent.id,row);
+  }catch(error){console.error(`Could not check whether agent ${agent.id} ran out of its account's limit: ${reason(error)}`);}
+ });
+ return async()=>{removeCreate();removeHook();removeCreated();removeTurnEnded();startNotes.clear();await controller.close();};
 }

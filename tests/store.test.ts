@@ -54,3 +54,17 @@ it("reads a 0.6 registry without a fallback choice as fallback on, and keeps a c
  expect((await new AccountStore(root).read()).fallback).toEqual({claude:true,codex:false});
  expect((await store.snapshot()).fallback).toEqual({claude:true,codex:false});
 });
+
+it("reads a registry without an automatic failover choice as off for both providers, and keeps a choice once made", async () => {
+ const root = await mkdtemp(join(tmpdir(), "account-auto-failover-")); roots.push(root);
+ const sourceHomes = {claude:join(root,"claude"),codex:join(root,"codex")};
+ const store = new AccountStore(root); await store.initialize(sourceHomes);
+ const legacy = JSON.parse(await readFile(join(root,"registry.json"),"utf8"));
+ delete legacy.autoFailover;
+ await writeFile(join(root,"registry.json"), JSON.stringify(legacy));
+ expect((await store.read()).autoFailover).toEqual({claude:false,codex:false});
+ expect((await store.snapshot()).autoFailover).toEqual({claude:false,codex:false});
+ await store.change(state => { state.autoFailover.claude = true; });
+ expect((await new AccountStore(root).read()).autoFailover).toEqual({claude:true,codex:false});
+ expect((await store.snapshot()).autoFailover).toEqual({claude:true,codex:false});
+});
