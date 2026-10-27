@@ -69,7 +69,10 @@ local and SSH-based results.
   lets a plugin give agents tools of its own, and providers get a
   `session.can_stop_runtime` request. The client entries are unchanged. The
   plugin's `agent.session_open` hook changes only `env` and spreads the rest of the
-  request, so the new fields, and the tools other plugins put there, pass through.
+  request. That matters on 0.14: Paseo checks each hook's result against a strict
+  schema in which the new fields are required, and refuses the session open when a
+  read-only field changed. Each plugin's hook sees only its own `tools` and
+  `mcpServers`, starting empty; Paseo merges them across plugins afterwards.
 - With the SDK swapped to **0.14.0-beta.1** in a scratch copy, typecheck passed
   with no errors and **308/308 tests** passed. The build step is skipped there for
   the reason recorded under 0.12.
