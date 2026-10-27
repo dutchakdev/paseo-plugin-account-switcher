@@ -74,7 +74,7 @@ Server and client code must not import `@getpaseo/client` or `@getpaseo/protocol
 | `shared/contracts.ts` | Public RPC schemas and shared types |
 | `tests/` | Behavioral regressions and synthetic process fixtures |
 
-The [architecture guide](docs/architecture.md) explains how these parts fit together. Use the [public Paseo plugin reference](https://paseo.sh/docs/plugins/reference) and installed SDK declarations when changing integration code. SDK development dependencies stay pinned to 0.8.0 so typechecking keeps the plugin on the 0.8 API, which every supported release still provides.
+The [architecture guide](docs/architecture.md) explains how these parts fit together. Use the [public Paseo plugin reference](https://paseo.sh/docs/plugins/reference) and installed SDK declarations when changing integration code. SDK development dependencies stay pinned to 0.11.4, the oldest supported Paseo, so typechecking keeps the plugin on the 0.11 API, which every supported release still provides.
 
 ## Change guidelines
 

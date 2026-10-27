@@ -15,6 +15,8 @@ export const RegistrySchema = z.object({
  defaults: z.object({claude:z.string().nullable(),codex:z.string().nullable()}),
  // Whether a new agent may start on another account when the default would fail; registries before 0.7 had no choice and default to on.
  fallback: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:true,codex:true}),
+ // Whether a chat whose turn ran out of its account's limit switches by itself instead of offering a switch; off unless chosen.
+ autoFailover: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:false,codex:false}),
  sourceHomes: z.object({claude:z.string(),codex:z.string()}),
  sourceEnvironment: z.object({claude:z.object({CLAUDE_CONFIG_DIR:z.string().optional(),CLAUDE_SECURESTORAGE_CONFIG_DIR:z.string().optional()}),codex:z.object({CODEX_HOME:z.string().optional()})}).default({claude:{},codex:{}}),
  commands: CommandsSchema, originalCommands: CommandsSchema,
@@ -31,6 +33,12 @@ export function accountFrom(registry: Registry, id: string): StoredAccount {
  const account = registry.accounts.find(a => a.id === id);
  if (!account) throw new Error("Account not found.");
  return account;
+}
+/** The account an agent runs on as the registry records it: its binding's confirmed account, or for an agent without a
+ * binding its provider's Current CLI account. Null while a binding's account is unconfirmed. */
+export function boundAccount(registry: Registry, agentId: string, provider: Provider): string | null {
+ const bound = registry.bindings.find(b => b.agentId === agentId);
+ return bound ? bound.currentAccountId : registry.accounts.find(a => a.source === "system" && a.provider === provider)?.id ?? null;
 }
 export class AccountStore {
  private queue: Promise<unknown> = Promise.resolve();
@@ -63,7 +71,7 @@ export class AccountStore {
  async snapshot():Promise<AccountState> {
    const state=await this.read();
    const status=(provider:Provider)=>({available:state.available[provider],integrated:state.integration.enabled&&state.integration.providers.includes(provider)});
-   return { accounts:state.accounts.map(a=>AccountSchema.parse(a)),bindings:state.bindings.map(b=>BindingSchema.parse(b)),defaults:state.defaults,fallback:state.fallback,integration:{enabled:state.integration.enabled,error:state.integration.error},providers:{claude:status("claude"),codex:status("codex")} };
+   return { accounts:state.accounts.map(a=>AccountSchema.parse(a)),bindings:state.bindings.map(b=>BindingSchema.parse(b)),defaults:state.defaults,fallback:state.fallback,autoFailover:state.autoFailover,integration:{enabled:state.integration.enabled,error:state.integration.error},providers:{claude:status("claude"),codex:status("codex")} };
  }
  async add(provider:Provider,label:string):Promise<StoredAccount> {
    return this.change(state=>{const account:StoredAccount={id:randomUUID(),provider,label:label.trim(),source:"managed",home:"",email:null,plan:null,authStatus:"needs_auth",createdAt:new Date().toISOString(),identityKey:null,generation:0,loginToken:null};account.home=join(this.root,"accounts",account.id,provider);state.accounts.push(account);return account;});

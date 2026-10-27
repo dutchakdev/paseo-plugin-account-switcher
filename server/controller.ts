@@ -6,11 +6,11 @@ import { lstat, readFile, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "./paseo-api";
 import { AccountSchema, missingCli, type LoginSession, type Provider } from "../shared/contracts";
-import { AccountStore, accountFrom, type Registry, type StoredAccount } from "./store";
+import { AccountStore, accountFrom, boundAccount, type Registry, type StoredAccount, type StoredBinding } from "./store";
 import { prepareProfile } from "./profiles";
 import { accountCommand, accountEnvironment, launchLogin, probeAccount, removeAccountCredentials } from "./auth";
 import { installIntegration, restoreIntegration, writeLaunchers, prepareRuntime, reconcileIntegration } from "./integration";
-import { SwitchService } from "./switching";
+import { SwitchRefusal, SwitchService } from "./switching";
 import { createUsageService, readCredentialVersion, type AccountReadOptions, type QuotaAccount } from "./usage";
 import { renewExpiredClaudeToken } from "./usage/claude";
 import { LoginSessions, type LoginDependencies } from "./login";
@@ -18,6 +18,10 @@ import { LoginSessions, type LoginDependencies } from "./login";
 const execFileAsync=promisify(execFile);
 // A revoked sign-in fails every renewal; this bounds how often it starts the CLI.
 const RENEWAL_INTERVAL=600000;
+// Agent statuses that show a launch got under way, for the receipt check: the Accounts list waits for a session that is
+// up. Failover also takes "error", which Paseo sets when a turn fails, before the plugin's turn_ended hook runs: the
+// launcher wrote the receipt when it started the CLI, so the receipt still names the account the agent started on.
+const STARTED=["idle","running"],STARTED_FOR_FAILOVER=[...STARTED,"error"];
 export class AccountController {
  readonly store:AccountStore;
  readonly ready:Promise<void>;
@@ -56,16 +60,31 @@ export class AccountController {
   await this.reconcileDeletedAgents(paseo);
   await this.reconcileLogins();
   const state=await this.store.read();
-  for(const binding of state.bindings.filter(b=>state.integration.enabled&&!this.integrationChanging&&b.currentAccountId===null&&b.status==="ready"&&b.launchAccountId&&b.launchToken)){
-   try{
-    const receipt=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(binding.agentId)+".json"),"utf8"));
-    if(receipt.accountId!==binding.launchAccountId||receipt.launchToken!==binding.launchToken)continue;
-    const live=await paseo.agents.ref(binding.agentId).refresh();
-    if(!live||!["idle","running"].includes(live.agent.status))continue;
-    await this.store.change(r=>{const b=r.bindings.find(b=>b.agentId===binding.agentId);if(r.integration.enabled&&!this.integrationChanging&&b&&b.launchToken===binding.launchToken&&b.launchAccountId===binding.launchAccountId&&b.currentAccountId===null&&b.status==="ready"){b.currentAccountId=binding.launchAccountId;b.launchToken=null;b.registrationObserved=true;}});
-   }catch{/* The UI keeps the account unconfirmed until native startup succeeds. */}
-  }
+  for(const binding of state.bindings)await this.confirmLaunch(paseo,state,binding,STARTED);
   return this.store.snapshot();
+ }
+ /** Confirms that an agent runs on the account it was launched on: the launcher's receipt names that account and launch,
+  * and the agent's status is one of `started`. True once the binding records it as the agent's account. */
+ private async confirmLaunch(paseo:PaseoApi,state:Registry,binding:StoredBinding,started:readonly string[]):Promise<boolean>{
+  if(!state.integration.enabled||this.integrationChanging||binding.currentAccountId!==null||binding.status!=="ready"||!binding.launchAccountId||!binding.launchToken)return false;
+  try{
+   const receipt=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(binding.agentId)+".json"),"utf8"));
+   if(receipt.accountId!==binding.launchAccountId||receipt.launchToken!==binding.launchToken)return false;
+   const live=await paseo.agents.ref(binding.agentId).refresh();
+   if(!live||!started.includes(live.agent.status))return false;
+   return await this.store.change(r=>{const b=r.bindings.find(b=>b.agentId===binding.agentId);if(r.integration.enabled&&!this.integrationChanging&&b&&b.launchToken===binding.launchToken&&b.launchAccountId===binding.launchAccountId&&b.currentAccountId===null&&b.status==="ready"){b.currentAccountId=binding.launchAccountId;b.launchToken=null;b.registrationObserved=true;return true;}return false;});
+  }catch{/* The UI keeps the account unconfirmed until native startup succeeds. */return false;}
+ }
+ /** The account an agent runs on, for failover. A launch not confirmed yet is confirmed now by its receipt, the check
+  * `snapshot` makes while the app polls: an agent started with no app open (a schedule, a heartbeat, `paseo run`) would
+  * otherwise wait for that. Unlike `snapshot` it also accepts an agent a failed turn left in "error". Null when nothing
+  * confirms one. `state` is the registry to take the binding from, the latest by default. */
+ async accountOf(paseo:PaseoApi,agentId:string,provider:Provider,state?:Registry):Promise<string|null>{
+  await this.ready;
+  const registry=state??await this.store.read(),known=boundAccount(registry,agentId,provider);
+  if(known)return known;
+  const binding=registry.bindings.find(b=>b.agentId===agentId);
+  return binding&&await this.confirmLaunch(paseo,registry,binding,STARTED_FOR_FAILOVER)?binding.launchAccountId:null;
  }
  async observeAgentRegistration(agentId:string){
   await this.ready;
@@ -307,19 +326,19 @@ export class AccountController {
  }
  switcher(paseo:PaseoApi):SwitchService {
   let service=this.switches.get(paseo);if(service)return service;
-  const requireIntegration=async()=>{if(this.integrationChanging)throw new Error("An integration change is still in progress.");await reconcileIntegration(paseo,this.store);if(!(await this.store.read()).integration.enabled)throw new Error("Account integration is no longer active. Check its settings and enable it again.");};
+  const requireIntegration=async()=>{if(this.integrationChanging)throw new SwitchRefusal("An integration change is still in progress.");await reconcileIntegration(paseo,this.store);if(!(await this.store.read()).integration.enabled)throw new SwitchRefusal("Account integration is no longer active. Check its settings and enable it again.");};
   service=new SwitchService({store:this.store,applying:this.applying,usage:()=>this.usage.list(),checkAccount:async id=>{await requireIntegration();return this.checkAccount(id);},inspect:async(id)=>{
-   const result=await paseo.agents.ref(id).refresh();if(!result)throw new Error("Agent not found.");
+   const result=await paseo.agents.ref(id).refresh();if(!result)throw new SwitchRefusal("Agent not found.");
    const a=result.agent;
    return{provider:a.provider,busy:a.status==="running"||a.status==="initializing"||!!a.activeTurn||a.pendingPermissions.length>0,archived:!!a.archivedAt};
   },reload:async(id)=>{
    await requireIntegration();
    const config=JSON.parse(await readFile(join(dirname(this.store.root),"config.json"),"utf8"));
    const listen=config.daemon?.listen;
-   if(typeof listen!=="string"||!listen)throw new Error("Could not identify the daemon for reload.");
+   if(typeof listen!=="string"||!listen)throw new SwitchRefusal("Could not identify the daemon for reload.");
    const host=listen.replace(/^0\.0\.0\.0:/,"127.0.0.1:");
    try{await execFileAsync("paseo",["agent","reload",id,"--json","--host",host],{timeout:120_000,maxBuffer:1024*1024,env:process.env});}
-   catch{throw new Error("The native agent reload failed. Check the agent status and try again.");}
+   catch{throw new SwitchRefusal("The native agent reload failed. Check the agent status and try again.");}
    // Paseo 0.11 reloads into an idle session and spawns the CLI on first use; listing
    // commands starts it so the launcher can confirm the account. Older hosts already started it.
    const agent=paseo.agents.ref(id) as {commands?:()=>Promise<unknown>};

@@ -4,8 +4,11 @@ export type SelectionAccount = { id: string; authStatus: string; loginToken?: st
 export type Blocker = "exhausted" | "model";
 
 // Only limits that stop every request of the account count; a model's own week or extra paid usage do not.
-const binding = (window: UsageWindow) => window.scope === "account";
-const inEffect = (window: UsageWindow, now: number) => !window.resetsAt || Date.parse(window.resetsAt) > now;
+export const binding = (window: UsageWindow) => window.scope === "account";
+export const inEffect = (window: UsageWindow, now: number) => !window.resetsAt || Date.parse(window.resetsAt) > now;
+/** An account-wide window that is full until a known reset still ahead: within a window, use only grows until the reset. */
+export const fullUntilReset = (window: UsageWindow, now: number) =>
+  binding(window) && window.usedPercent !== null && window.usedPercent >= 100 && window.resetsAt !== null && inEffect(window, now);
 
 /** Why an account would certainly fail a new agent, from provider-reported data only; null when nothing proves it.
  * A full window proves it only with a known future reset: within a window, use only grows until the reset.
@@ -16,7 +19,7 @@ export function blocker(snapshot: UsageSnapshot | undefined, model: string | nul
   if (fresh && model && snapshot.models && !snapshot.models.includes(model)) return "model";
   if (fresh && snapshot.usageAllowed === false) return "exhausted";
   if (snapshot.status !== "ok" && snapshot.status !== "stale") return null;
-  return snapshot.windows.some(window => binding(window) && window.usedPercent !== null && window.usedPercent >= 100 && window.resetsAt !== null && inEffect(window, now)) ? "exhausted" : null;
+  return snapshot.windows.some(window => fullUntilReset(window, now)) ? "exhausted" : null;
 }
 
 /** Percent left in the tightest account-wide window still in effect, or null without data. */

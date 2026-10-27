@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AccountStore } from "../server/store";
 import type { PaseoApi } from "@getpaseo/client";
-import { SwitchService, type SwitchDependencies } from "../server/switching";
+import { SwitchRefusal, SwitchService, type SwitchDependencies } from "../server/switching";
 import { AccountController } from "../server/controller";
 import { atomicWrite } from "../server/files";
 const roots:string[]=[];
@@ -275,4 +275,61 @@ it("applies only the account the caller selected when another client changed the
  expect(f.reloads()).toBe(0);
  expect((await f.store.read()).bindings.find(b=>b.agentId==="raced")).toMatchObject({pendingAccountId:other.id,status:"ready"});
  await expect(f.service.apply("raced",other.id)).resolves.toMatchObject({currentAccountId:other.id});
+});
+
+describe("a switch the user did not select in the switcher",()=>{
+ // The failover row's button and the automatic switch select and apply in one step.
+ it("selects and applies the account in one step",async()=>{
+  const {store,target}=await fixture();
+  await expect(makeService(store).switchTo("one-step",target.id)).resolves.toMatchObject({currentAccountId:target.id,pendingAccountId:null,status:"ready"});
+ });
+ it("leaves no binding behind for an agent that had none when the switch is refused",async()=>{
+  const {store,target}=await fixture();
+  const service=makeService(store,{inspect:async()=>({provider:"codex",busy:true,archived:false})});
+  await expect(service.switchTo("unbound",target.id)).rejects.toThrow("Wait for the agent to finish its response.");
+  expect((await store.read()).bindings).toEqual([]);
+ });
+ it("puts the user's own selection back when the switch is refused before it starts",async()=>{
+  const {store,target}=await fixture(),chosen=await store.add("codex","Chosen");
+  await makeService(store).prepare("selected",chosen.id);
+  await store.change(r=>{r.bindings[0].error="An earlier switch failed.";});
+  const before=(await store.read()).bindings[0];
+  const reload=vi.fn(async()=>{});
+  const service=makeService(store,{reload,inspect:async()=>({provider:"codex",busy:true,archived:false})});
+  await expect(service.switchTo("selected",target.id)).rejects.toThrow("Wait for the agent to finish its response.");
+  expect(reload).not.toHaveBeenCalled();
+  expect((await store.read()).bindings[0]).toEqual(before);
+  // Nothing was selected before: nothing stays selected.
+  await store.change(r=>{r.bindings[0].pendingAccountId=null;r.bindings[0].error=null;});
+  await expect(service.switchTo("selected",target.id)).rejects.toThrow("Wait for the agent to finish its response.");
+  expect((await store.read()).bindings[0]).toMatchObject({currentAccountId:"system-codex",pendingAccountId:null,status:"ready",error:null});
+ });
+ it("leaves a selection another client made meanwhile alone",async()=>{
+  const {store,target}=await fixture(),other=await store.add("codex","Other client");
+  const service=makeService(store,{checkAccount:async()=>{await store.prepare("raced","codex",other.id);return{authStatus:"ready"};}});
+  await expect(service.switchTo("raced",target.id)).rejects.toThrow(/selection changed/);
+  expect((await store.read()).bindings[0]).toMatchObject({pendingAccountId:other.id,status:"ready"});
+ });
+ it("rolls back as Apply does once the binding has started switching",async()=>{
+  const {store,target}=await fixture();
+  await expect(makeService(store,{reload:async()=>{}}).switchTo("silent",target.id)).rejects.toThrow("did not confirm");
+  expect((await store.read()).bindings[0]).toMatchObject({currentAccountId:null,pendingAccountId:target.id,status:"error"});
+ });
+});
+
+describe("what a failed switch may show",()=>{
+ it("marks the service's own refusals, which are written for the user",async()=>{
+  const {store,target}=await fixture();
+  const busy=makeService(store,{inspect:async()=>({provider:"codex",busy:true,archived:false})});
+  await busy.prepare("refused",target.id);
+  await expect(busy.apply("refused")).rejects.toBeInstanceOf(SwitchRefusal);
+  await expect(makeService(store,{reload:async()=>{}}).switchTo("unconfirmed",target.id)).rejects.toBeInstanceOf(SwitchRefusal);
+ });
+ it("passes any other failure on unmarked",async()=>{
+  const {store,target}=await fixture();
+  const raw=Object.assign(new Error("EACCES: permission denied, open '/Users/me/.paseo/config.json'"),{code:"EACCES"});
+  const failure=makeService(store,{reload:async()=>{throw raw;}}).switchTo("raw",target.id);
+  await expect(failure).rejects.toBe(raw);
+  await expect(failure).rejects.not.toBeInstanceOf(SwitchRefusal);
+ });
 });
