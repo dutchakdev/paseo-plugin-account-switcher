@@ -89,7 +89,8 @@ export class SwitchService {
    const usage=await this.deps.usage?.().catch(()=>[])??[];
    const evidence={defaultId:selected,accounts:state.accounts.filter(a=>a.provider===provider),usage,model,now:Date.now()};
    let chosen:string|undefined,defaultStatus:string|undefined;
-   for(const id of launchOrder(evidence)){
+   // With fallback off the default is binding, as before 0.7: the agent starts there or not at all.
+   for(const id of state.fallback[provider]?launchOrder(evidence):[selected]){
      const {authStatus}=await this.deps.checkAccount(id);
      if(id===selected)defaultStatus=authStatus;
      if(authStatus==="ready"){chosen=id;break;}

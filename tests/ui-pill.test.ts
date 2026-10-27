@@ -8,7 +8,7 @@ async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 const agent = { id: "agent-1", workspaceId: "workspace-1", provider: "codex", status: "idle", archivedAt: null } as PaseoAgent;
 const state: AccountState = {
   accounts: [{ id: "system-codex", provider: "codex", source: "system", label: "System", authStatus: "ready", email: null, plan: null, createdAt: "2026-09-16" }],
-  bindings: [], defaults: { claude: null, codex: null }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
+  bindings: [], defaults: { claude: null, codex: null }, fallback: { claude: true, codex: true }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
 };
 
 afterEach(() => vi.useRealTimers());

@@ -33,6 +33,7 @@ export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export const StateSchema = z.object({
   accounts: z.array(AccountSchema), bindings: z.array(BindingSchema),
   defaults: z.object({ claude: z.string().nullable(), codex: z.string().nullable() }),
+  fallback: z.object({ claude: z.boolean(), codex: z.boolean() }).default({ claude: true, codex: true }),
   integration: z.object({ enabled: z.boolean(), error: z.string().nullable() }),
   providers: z.object({ claude: ProviderStatusSchema, codex: ProviderStatusSchema }),
 });
@@ -65,6 +66,7 @@ export const addAccount = defineRpc({ name: "accounts.add", input: z.object({ pr
 export const renameAccount = defineRpc({ name: "accounts.rename", input: AccountId.extend({ label: z.string().trim().min(1).max(80) }), output: AccountSchema });
 export const removeAccount = defineRpc({ name: "accounts.remove", input: AccountId, output: Empty });
 export const setDefaultAccount = defineRpc({ name: "accounts.default", input: z.object({ provider: ProviderSchema, accountId: z.string().nullable() }), output: Empty });
+export const setFallback = defineRpc({ name: "accounts.fallback", input: z.object({ provider: ProviderSchema, enabled: z.boolean() }), output: Empty });
 export const startLogin = defineRpc({ name: "auth.start", input: AccountId.extend({ mode: LoginModeSchema.optional() }), output: LoginSessionSchema });
 export const getLoginStatus = defineRpc({ name: "auth.status", input: AccountId.extend({ sessionId: z.string().min(1) }), output: LoginSessionSchema });
 export const submitLoginCode = defineRpc({ name: "auth.submit-code", input: AccountId.extend({ sessionId: z.string().min(1), code: z.string().trim().min(1).max(2048) }), output: LoginSessionSchema });

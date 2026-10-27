@@ -244,6 +244,20 @@ describe("a new agent's account when the default would fail",()=>{
   const checkAccount=vi.fn(async(id:string)=>({authStatus:id===target.id?"error":"ready"}));
   await expect(makeService(store,{checkAccount}).bindNewAgent("unchecked-default","codex")).resolves.toMatchObject({reason:"unverified"});
  });
+ it("keeps a used-up default when fallback is off for its provider, as in 0.6.0",async()=>{
+  const {store,target,spare}=await pool();
+  await store.change(r=>{r.fallback.codex=false;});
+  const checkAccount=vi.fn(async(_id:string)=>({authStatus:"ready"}));
+  const service=makeService(store,{checkAccount,usage:async()=>[snapshot(target.id,100),snapshot(spare.id,0)]});
+  await expect(service.bindNewAgent("pinned","codex")).resolves.toEqual({accountId:target.id,defaultId:target.id,reason:null});
+  expect(checkAccount.mock.calls.map(([id])=>id)).toEqual([target.id]);
+ });
+ it("still requires sign-in on a pinned default instead of moving the agent",async()=>{
+  const {store,target}=await pool();
+  await store.change(r=>{r.fallback.codex=false;});
+  const service=makeService(store,{checkAccount:async(id:string)=>({authStatus:id===target.id?"needs_auth":"ready"})});
+  await expect(service.bindNewAgent("pinned-signed-out","codex")).rejects.toThrow(/requires authentication/);
+ });
  it("falls back to the default when every account is used up, as before",async()=>{
   const {store,target,spare}=await pool();
   const service=makeService(store,{usage:async()=>[snapshot(target.id,100),snapshot("system-codex",100),snapshot(spare.id,100)]});

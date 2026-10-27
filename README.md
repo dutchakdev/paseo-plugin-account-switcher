@@ -92,6 +92,8 @@ A new Claude or Codex agent starts on its provider's default account. It starts 
 
 The replacement is the account with the largest percentage left in its tightest account-wide window; accounts without limit data come after the measured ones. Percentages do not compare the size of different plans. If every account is ruled out, the agent starts on the default, as before. Choosing an account for a chat yourself always takes precedence, and nothing changes when no default is set.
 
+To keep the default binding, for example when one provider holds both work and personal subscriptions, choose **Always use the default** under that provider in Accounts. New agents then start on the default or not at all, as in 0.6.0. **Start on another account** is the initial choice; the control appears once a provider has a default and more than one account.
+
 Limits come from the plugin's last reading, so creating an agent does not wait for a provider's limits. It does run the official sign-in check for the default, and for each further account it tries.
 
 Before signing in again, switch agents away from that profile. To remove a managed account, clear its default and all current or pending selections first. Removal asks for confirmation. **Archived agents retain their account binding for resume**; restore and switch them before removing the account. **Current CLI** accounts cannot be removed.
