@@ -19,10 +19,20 @@ const controller = vi.hoisted(() => {
   // The readings it already has, which cost no provider request.
   const cached: unknown[] = [];
   const list = vi.fn(async () => structuredClone(cached));
+  // Agents whose launch receipt matches their binding. Like the controller, `accountOf` confirms such a launch for good.
+  const receipts = new Set<string>();
+  const accountOf = vi.fn(async (_paseo: unknown, agentId: string, provider: string, state: typeof registry = registry) => {
+    const bound = state.bindings.find(b => b.agentId === agentId);
+    if (!bound) return state.accounts.find(a => a.source === "system" && a.provider === provider)?.id ?? null;
+    if (bound.currentAccountId || !receipts.has(agentId)) return bound.currentAccountId;
+    const live = registry.bindings.find(b => b.agentId === agentId);
+    if (live) live.currentAccountId = bound.launchAccountId;
+    return bound.launchAccountId;
+  });
   return {
-    bindNewAgent, apply, prepare, read, change, refresh, readings, list, cached, registry,
+    bindNewAgent, apply, prepare, read, change, refresh, readings, list, cached, receipts, accountOf, registry,
     instance: { ready: Promise.resolve(), ensureRuntime: vi.fn(async () => {}), switcher: () => ({ bindNewAgent, apply, prepare }), close: vi.fn(async () => {}),
-      observeAgentRegistration: vi.fn(), store: { read, change }, usage: { refresh, list } },
+      observeAgentRegistration: vi.fn(), store: { read, change }, usage: { refresh, list }, accountOf },
   };
 });
 vi.mock("../server/controller", () => ({ AccountController: function AccountController() { return controller.instance; } }));
@@ -158,6 +168,17 @@ describe("notes never decide whether a switch succeeded", () => {
     await vi.waitFor(() => expect(appended).toHaveLength(1));
     expect(appended[0].item.data).toMatchObject({ from: "Current CLI · Codex", to: "Second" });
   });
+  it("names the account its receipt confirms when the agent's binding was not confirmed yet", async () => {
+    const saved = structuredClone(controller.registry.bindings);
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
+    controller.receipts.add("agent-1");
+    try {
+      const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
+      await handlers.get("switch.apply")!({ agentId: "agent-1" }, { paseo });
+      await vi.waitFor(() => expect(appended).toHaveLength(1));
+      expect(appended[0].item.data).toEqual({ kind: "switched", from: "Work", to: "Second", reason: null });
+    } finally { controller.registry.bindings = saved; controller.receipts.clear(); }
+  });
   it("returns the applied switch when reading labels for its note fails", async () => {
     const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
     controller.read.mockRejectedValue(new Error("registry busy"));
@@ -212,7 +233,7 @@ describe("a turn that fails on a used-up account", () => {
     Object.assign(controller.registry, structuredClone(saved));
     controller.read.mockImplementation(async () => controller.registry);
     controller.apply.mockReset(); controller.apply.mockImplementation(async (agentId: string) => ({ agentId, provider: "codex", currentAccountId: "second" }));
-    controller.prepare.mockClear(); controller.refresh.mockClear(); controller.list.mockClear();
+    controller.prepare.mockClear(); controller.refresh.mockClear(); controller.list.mockClear(); controller.receipts.clear();
   });
 
   it("refreshes the agent's account and offers a switch to the account with room", async () => {
@@ -308,6 +329,22 @@ describe("a turn that fails on a used-up account", () => {
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(sent).toEqual([]);
     expect(appended.filter(entry => entry.item.kind !== "account-failover")).toEqual([]);
+  });
+  // An agent started with no app open has an unconfirmed binding until something reads its launch receipt.
+  it("offers the switch for an agent whose launch only its receipt confirms", async () => {
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
+    controller.receipts.add("agent-1");
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(ended(), { paseo });
+    expect(controller.refresh).toHaveBeenCalledWith("work");
+    expect(rows(appended).map(item => item.data)).toEqual([expect.objectContaining({ state: "offered", from: "Work", to: "Second", toId: "second" })]);
+  });
+  it("adds nothing for an agent whose account nothing confirms", async () => {
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(ended(), { paseo });
+    expect(controller.refresh).not.toHaveBeenCalled();
+    expect(appended).toEqual([]);
   });
   it("adds nothing when the readings do not show the account used up", async () => {
     readings(reading("work", 80), reading("second", 10));
@@ -438,6 +475,24 @@ describe("a turn that fails on a used-up account", () => {
     await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo })).rejects.toThrow(busy);
     expect(rows(appended).at(-1).data).toMatchObject({ rowId, state: "failed", to: "Second", error: busy });
     expect(sent).toEqual([]);
+  });
+  it("applies the button's switch for an agent whose launch only its receipt confirms", async () => {
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
+    controller.receipts.add("agent-1");
+    const { handlers } = startAll(), { appended, sent, paseo } = paseoRecorder();
+    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo })).resolves.toEqual({});
+    expect(controller.apply).toHaveBeenCalledWith("agent-1", "second");
+    expect(rows(appended).at(-1).data).toMatchObject({ state: "switched", from: "Work", to: "Second" });
+    expect(sent).toEqual([{ agentId: "agent-1", text: "Continue." }]);
+  });
+  it("refuses the button's switch, saying why, when nothing confirms the agent's account", async () => {
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
+    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
+    const outcome = handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo });
+    await expect(outcome).rejects.toThrow("This agent's account is not confirmed yet.");
+    await expect(outcome).rejects.not.toThrow("Account not found.");
+    expect(controller.prepare).not.toHaveBeenCalled();
+    expect(appended).toEqual([]);
   });
   it("refuses a row that belongs to another agent", async () => {
     const { handlers } = startAll(), { appended, paseo } = paseoRecorder();

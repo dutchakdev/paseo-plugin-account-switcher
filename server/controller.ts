@@ -6,7 +6,7 @@ import { lstat, readFile, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "./paseo-api";
 import { AccountSchema, missingCli, type LoginSession, type Provider } from "../shared/contracts";
-import { AccountStore, accountFrom, type Registry, type StoredAccount } from "./store";
+import { AccountStore, accountFrom, boundAccount, type Registry, type StoredAccount, type StoredBinding } from "./store";
 import { prepareProfile } from "./profiles";
 import { accountCommand, accountEnvironment, launchLogin, probeAccount, removeAccountCredentials } from "./auth";
 import { installIntegration, restoreIntegration, writeLaunchers, prepareRuntime, reconcileIntegration } from "./integration";
@@ -56,16 +56,30 @@ export class AccountController {
   await this.reconcileDeletedAgents(paseo);
   await this.reconcileLogins();
   const state=await this.store.read();
-  for(const binding of state.bindings.filter(b=>state.integration.enabled&&!this.integrationChanging&&b.currentAccountId===null&&b.status==="ready"&&b.launchAccountId&&b.launchToken)){
-   try{
-    const receipt=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(binding.agentId)+".json"),"utf8"));
-    if(receipt.accountId!==binding.launchAccountId||receipt.launchToken!==binding.launchToken)continue;
-    const live=await paseo.agents.ref(binding.agentId).refresh();
-    if(!live||!["idle","running"].includes(live.agent.status))continue;
-    await this.store.change(r=>{const b=r.bindings.find(b=>b.agentId===binding.agentId);if(r.integration.enabled&&!this.integrationChanging&&b&&b.launchToken===binding.launchToken&&b.launchAccountId===binding.launchAccountId&&b.currentAccountId===null&&b.status==="ready"){b.currentAccountId=binding.launchAccountId;b.launchToken=null;b.registrationObserved=true;}});
-   }catch{/* The UI keeps the account unconfirmed until native startup succeeds. */}
-  }
+  for(const binding of state.bindings)await this.confirmLaunch(paseo,state,binding);
   return this.store.snapshot();
+ }
+ /** Confirms that an agent runs on the account it was launched on: the launcher's receipt names that account and launch,
+  * and the native session is up. True once the binding records it as the agent's account. */
+ private async confirmLaunch(paseo:PaseoApi,state:Registry,binding:StoredBinding):Promise<boolean>{
+  if(!state.integration.enabled||this.integrationChanging||binding.currentAccountId!==null||binding.status!=="ready"||!binding.launchAccountId||!binding.launchToken)return false;
+  try{
+   const receipt=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(binding.agentId)+".json"),"utf8"));
+   if(receipt.accountId!==binding.launchAccountId||receipt.launchToken!==binding.launchToken)return false;
+   const live=await paseo.agents.ref(binding.agentId).refresh();
+   if(!live||!["idle","running"].includes(live.agent.status))return false;
+   return await this.store.change(r=>{const b=r.bindings.find(b=>b.agentId===binding.agentId);if(r.integration.enabled&&!this.integrationChanging&&b&&b.launchToken===binding.launchToken&&b.launchAccountId===binding.launchAccountId&&b.currentAccountId===null&&b.status==="ready"){b.currentAccountId=binding.launchAccountId;b.launchToken=null;b.registrationObserved=true;return true;}return false;});
+  }catch{/* The UI keeps the account unconfirmed until native startup succeeds. */return false;}
+ }
+ /** The account an agent runs on. A launch not confirmed yet is confirmed now by its receipt, the check `snapshot` makes
+  * while the app polls: an agent started with no app open (a schedule, a heartbeat, `paseo run`) would otherwise wait for
+  * that. Null when nothing confirms one. `state` is the registry to take the binding from, the latest by default. */
+ async accountOf(paseo:PaseoApi,agentId:string,provider:Provider,state?:Registry):Promise<string|null>{
+  await this.ready;
+  const registry=state??await this.store.read(),known=boundAccount(registry,agentId,provider);
+  if(known)return known;
+  const binding=registry.bindings.find(b=>b.agentId===agentId);
+  return binding&&await this.confirmLaunch(paseo,registry,binding)?binding.launchAccountId:null;
  }
  async observeAgentRegistration(agentId:string){
   await this.ready;

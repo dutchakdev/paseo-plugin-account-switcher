@@ -5,7 +5,7 @@ import { AutoFailoverGuard, failoverDecision, mayBeUsedUp } from "./server/failo
 import type { PaseoApi } from "./server/paseo-api";
 import { registerPaseoUsage } from "./server/paseo-usage";
 import { profileEnv } from "./server/session-env";
-import { accountFrom, type Registry } from "./server/store";
+import { accountFrom, boundAccount, type Registry } from "./server/store";
 import { appendAccountNote, appendFailoverRow } from "./server/timeline";
 import { FAILOVER_KIND, type FailoverRow } from "./shared/failover";
 import type { AccountNote } from "./shared/timeline";
@@ -15,8 +15,6 @@ const MODEL_ENV="PASEO_ACCOUNT_SWITCHER_MODEL";
 // The prompt that resumes an agent's work on the account it was switched to.
 const CONTINUE="Continue.";
 const reason=(error:unknown)=>error instanceof Error?error.message:String(error);
-// An agent without a binding runs on its provider's Current CLI account; null while a binding's account is unconfirmed.
-const currentAccountOf=(state:Registry,agentId:string,provider:string)=>{const bound=state.bindings.find(b=>b.agentId===agentId);return bound?bound.currentAccountId:state.accounts.find(a=>a.source==="system"&&a.provider===provider)?.id??null;};
 
 export default function contribute(server:PluginServerContext){
  const controller=new AccountController();
@@ -41,15 +39,15 @@ export default function contribute(server:PluginServerContext){
  server.handle(rpc.prepareSwitch,async({agentId,accountId},{paseo})=>{await controller.ensureRuntime(paseo);return controller.switcher(paseo).prepare(agentId,accountId);});
  server.handle(rpc.applySwitch,async({agentId,accountId},{paseo})=>{
   await controller.ensureRuntime(paseo);
+  // The registry as the agent left it: the note names the account from its binding.
   const before=await controller.store.read().catch(()=>null);
   const binding=await controller.switcher(paseo).apply(agentId,accountId);
   if(binding.currentAccountId){
    const to=binding.currentAccountId;
    void controller.usage.refresh(to).catch(()=>{});
    const switched=await note(agentId,async()=>{
-    const state=await controller.store.read(),prior=before?.bindings.find(b=>b.agentId===agentId);
-    // An agent without a binding ran on its provider's Current CLI account.
-    const fromId=prior?prior.currentAccountId:state.accounts.find(a=>a.source==="system"&&a.provider===binding.provider)?.id;
+    const state=await controller.store.read();
+    const fromId=before?await controller.accountOf(paseo,agentId,binding.provider,before):null;
     const label=labelOf(state,to);
     return label?{kind:"switched",from:labelOf(state,fromId),to:label,reason:null}:null;
    });
@@ -88,9 +86,10 @@ export default function contribute(server:PluginServerContext){
   if(!rowId.startsWith(`${FAILOVER_KIND}-${agentId}-`))throw new Error("The switch offer belongs to another agent.");
   await controller.ready;
   const state=await controller.store.read(),target=state.accounts.find(a=>a.id===accountId);
-  // Named at the click: the account the agent leaves now.
-  const from=target?labelOf(state,currentAccountOf(state,agentId,target.provider)):null;
-  if(!target||!from)throw new Error("Account not found.");
+  if(!target)throw new Error("Account not found.");
+  // Named at the click: the account the agent leaves now, with a launch not confirmed yet confirmed by its receipt.
+  const from=labelOf(state,await controller.accountOf(paseo,agentId,target.provider));
+  if(!from)throw new Error("This agent's account is not confirmed yet. Choose an account in the account switcher instead.");
   await switchOver(paseo,agentId,{rowId,state:"offered",from,to:target.label,toId:target.id,resetsAt:null,error:null},target.id,"switched");
   return{};
  });
@@ -145,7 +144,8 @@ export default function contribute(server:PluginServerContext){
    const state=await controller.store.read();
    // Without that provider's launcher the CLI runs on the system login, so a switch could not take effect.
    if(!state.integration.enabled||!state.integration.providers.includes(provider)||settled(state))return;
-   const fromId=currentAccountOf(state,agent.id,provider),from=labelOf(state,fromId);
+   // An agent started with no app open may have a launch nothing has confirmed yet; its receipt confirms it now.
+   const fromId=await controller.accountOf(paseo,agent.id,provider),from=labelOf(state,fromId);
    if(!fromId||!from)return;
    // The cache costs no provider request, so an ordinary completed turn ends here.
    if(completed&&!mayBeUsedUp((await controller.usage.list()).find(item=>item.accountId===fromId),Date.now()))return;
@@ -153,7 +153,7 @@ export default function contribute(server:PluginServerContext){
    const [usage,snapshot]=await Promise.all([controller.usage.refresh(fromId),paseo.agents.ref(agent.id).refresh().catch(()=>null)]);
    // A switch may have started or finished during those reads; from here to the row nothing awaits.
    const latest=await controller.store.read();
-   if(settled(latest)||currentAccountOf(latest,agent.id,provider)!==fromId)return;
+   if(settled(latest)||boundAccount(latest,agent.id,provider)!==fromId)return;
    const model=snapshot?.agent.runtimeInfo?.model||snapshot?.agent.model||null,now=Date.now();
    const decision=failoverDecision({currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider),usage,model,now});
    if(!decision)return;

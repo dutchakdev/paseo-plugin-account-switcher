@@ -363,6 +363,26 @@ describe("confirmation token lifecycle", () => {
     expect((await controller.store.read()).bindings[0].launchToken).toBeNull();
   });
 
+  // Agents started with no app open (schedules, heartbeats, `paseo run`) are never confirmed by the app's polling.
+  it("names the account an agent runs on, confirming an unconfirmed launch by its receipt", async () => {
+    const { controller, account } = await fixture();
+    await controller.store.change(r => { r.integration.enabled = true; r.defaults.codex = account.id; });
+    expect(await controller.accountOf(paseo, "never-bound", "codex")).toBe("system-codex");
+    await controller.switcher(paseo).bindNewAgent("scheduled", "codex");
+    const token = (await controller.store.read()).bindings[0].launchToken;
+    // No receipt yet: the agent is on no known account, and nothing changes.
+    expect(await controller.accountOf(paseo, "scheduled", "codex")).toBeNull();
+    expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: null, launchToken: token });
+    await mkdir(join(controller.store.root, "receipts"), { recursive: true });
+    await writeFile(join(controller.store.root, "receipts", "scheduled.json"), JSON.stringify({ accountId: account.id, launchToken: token }));
+    const starting = { agents: { ref: () => ({ refresh: async () => ({ agent: { status: "initializing" } }) }) } } as unknown as PaseoApi;
+    expect(await controller.accountOf(starting, "scheduled", "codex")).toBeNull();
+    expect(await controller.accountOf(paseo, "scheduled", "codex")).toBe(account.id);
+    // Confirmed for good, as the app's polling would have done.
+    expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: account.id, launchToken: null, registrationObserved: true });
+    expect(await controller.accountOf(starting, "scheduled", "codex")).toBe(account.id);
+  });
+
   it("does not confirm a pending receipt while integration is disabled", async () => {
     const { controller, account } = await fixture();
     await controller.store.change(r => { r.integration.enabled = true; r.defaults.codex = account.id; });

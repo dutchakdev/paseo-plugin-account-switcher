@@ -34,6 +34,12 @@ export function accountFrom(registry: Registry, id: string): StoredAccount {
  if (!account) throw new Error("Account not found.");
  return account;
 }
+/** The account an agent runs on as the registry records it: its binding's confirmed account, or for an agent without a
+ * binding its provider's Current CLI account. Null while a binding's account is unconfirmed. */
+export function boundAccount(registry: Registry, agentId: string, provider: Provider): string | null {
+ const bound = registry.bindings.find(b => b.agentId === agentId);
+ return bound ? bound.currentAccountId : registry.accounts.find(a => a.source === "system" && a.provider === provider)?.id ?? null;
+}
 export class AccountStore {
  private queue: Promise<unknown> = Promise.resolve();
  constructor(readonly root: string) {}
