@@ -217,25 +217,25 @@ describe("a new agent's account when the default would fail",()=>{
  it("starts on the account with the most room when the default's limit is used up",async()=>{
   const {store,target,spare}=await pool();
   const service=makeService(store,{usage:async()=>[snapshot(target.id,100),snapshot("system-codex",70),snapshot(spare.id,20)]});
-  await service.bindNewAgent("after-limit","codex");
+  await expect(service.bindNewAgent("after-limit","codex")).resolves.toEqual({accountId:spare.id,defaultId:target.id,reason:"exhausted"});
   expect(await launched(store,"after-limit")).toBe(spare.id);
  });
  it("starts on an account whose plan offers the agent's model",async()=>{
   const {store,target,spare}=await pool();
   const service=makeService(store,{usage:async()=>[snapshot(target.id,0,["gpt-6-luna"]),snapshot("system-codex",0,["gpt-6-luna"]),snapshot(spare.id,50,["gpt-6.1-sol"])]});
-  await service.bindNewAgent("paid-model","codex","gpt-6.1-sol");
+  await expect(service.bindNewAgent("paid-model","codex","gpt-6.1-sol")).resolves.toMatchObject({accountId:spare.id,reason:"model"});
   expect(await launched(store,"paid-model")).toBe(spare.id);
  });
  it("keeps the default while nothing shows it would fail",async()=>{
   const {store,target,spare}=await pool();
   const service=makeService(store,{usage:async()=>[snapshot(target.id,90),snapshot(spare.id,0)]});
-  await service.bindNewAgent("healthy","codex","gpt-6.1-sol");
+  await expect(service.bindNewAgent("healthy","codex","gpt-6.1-sol")).resolves.toEqual({accountId:target.id,defaultId:target.id,reason:null});
   expect(await launched(store,"healthy")).toBe(target.id);
  });
  it("moves on to the next account when the default's sign-in probe fails",async()=>{
   const {store,target}=await pool();
   const checkAccount=vi.fn(async(id:string)=>({authStatus:id===target.id?"needs_auth":"ready"}));
-  await makeService(store,{checkAccount}).bindNewAgent("signed-out-default","codex");
+  await expect(makeService(store,{checkAccount}).bindNewAgent("signed-out-default","codex")).resolves.toMatchObject({reason:"sign-in"});
   expect(await launched(store,"signed-out-default")).not.toBe(target.id);
   expect(checkAccount.mock.calls[0][0]).toBe(target.id);
  });

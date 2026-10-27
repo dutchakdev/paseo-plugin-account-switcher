@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 const controller = vi.hoisted(() => {
-  const bindNewAgent = vi.fn(async () => {});
+  const bindNewAgent = vi.fn(async (..._args: unknown[]): Promise<unknown> => undefined);
+  const apply = vi.fn(async () => ({ agentId: "agent-1", currentAccountId: "second" }));
+  const registry = { accounts: [{ id: "work", label: "Work" }, { id: "second", label: "Second" }], bindings: [{ agentId: "agent-1", currentAccountId: "work" }] };
   return {
-    bindNewAgent,
-    instance: { ready: Promise.resolve(), ensureRuntime: vi.fn(async () => {}), switcher: () => ({ bindNewAgent }), close: vi.fn(async () => {}), observeAgentRegistration: vi.fn() },
+    bindNewAgent, apply,
+    instance: { ready: Promise.resolve(), ensureRuntime: vi.fn(async () => {}), switcher: () => ({ bindNewAgent, apply }), close: vi.fn(async () => {}),
+      observeAgentRegistration: vi.fn(), store: { read: async () => registry }, usage: { refresh: vi.fn(async () => []) } },
   };
 });
 vi.mock("../server/controller", () => ({ AccountController: function AccountController() { return controller.instance; } }));
@@ -16,6 +19,15 @@ function start() {
   const before = new Map<string, Before>();
   contribute({ handle: () => {}, before: (name: string, handler: Before) => { before.set(name, handler); return () => {}; }, on: () => () => {} } as any);
   return before;
+}
+function startAll() {
+  const before = new Map<string, Before>(), on = new Map<string, (event: any, context: any) => any>(), handlers = new Map<string, (input: any, context: any) => any>();
+  contribute({ handle: (contract: { name: string }, handler: any) => { handlers.set(contract.name, handler); }, before: (name: string, handler: Before) => { before.set(name, handler); return () => {}; }, on: (name: string, handler: any) => { on.set(name, handler); return () => {}; } } as any);
+  return { before, on, handlers };
+}
+function paseoRecorder() {
+  const appended: { agentId: string; item: any }[] = [];
+  return { appended, paseo: { agents: { ref: (agentId: string) => ({ timeline: { append: async (item: unknown) => { appended.push({ agentId, item }); return {}; } } }) } } };
 }
 const opening = (env: Record<string, string>, reason = "create") =>
   ({ agentId: "agent-1", workspaceId: null, provider: "codex", cwd: "/work", reason, purpose: "interactive", env });
@@ -43,5 +55,30 @@ describe("the agent's model on its way to account selection", () => {
     const opened = await before.get("agent.session_open")!({ request: opening(created.env, "resume") }, { paseo: {} });
     expect(controller.bindNewAgent).not.toHaveBeenCalled();
     expect(opened.env).toEqual({});
+  });
+});
+
+describe("account notes in the timeline", () => {
+  it("records why a new agent did not start on the default once the agent exists", async () => {
+    const { before, on } = startAll(), { appended, paseo } = paseoRecorder();
+    controller.bindNewAgent.mockResolvedValueOnce({ accountId: "second", defaultId: "work", reason: "exhausted" });
+    await before.get("agent.session_open")!({ request: opening({}) }, { paseo });
+    expect(appended).toEqual([]);
+    await on.get("agent.created")!({ agent: { id: "agent-1" } }, { paseo });
+    await vi.waitFor(() => expect(appended).toHaveLength(1));
+    expect(appended[0]).toMatchObject({ agentId: "agent-1", item: { type: "plugin", kind: "account-note", version: 1, data: { kind: "started", from: "Work", to: "Second", reason: "exhausted" } } });
+  });
+  it("adds no note when the agent starts on its default", async () => {
+    const { before, on } = startAll(), { appended, paseo } = paseoRecorder();
+    controller.bindNewAgent.mockResolvedValueOnce({ accountId: "work", defaultId: "work", reason: null });
+    await before.get("agent.session_open")!({ request: opening({}) }, { paseo });
+    await on.get("agent.created")!({ agent: { id: "agent-1" } }, { paseo });
+    expect(appended).toEqual([]);
+  });
+  it("records an applied switch with the account it left", async () => {
+    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
+    await handlers.get("switch.apply")!({ agentId: "agent-1" }, { paseo });
+    await vi.waitFor(() => expect(appended).toHaveLength(1));
+    expect(appended[0].item.data).toEqual({ kind: "switched", from: "Work", to: "Second", reason: null });
   });
 });

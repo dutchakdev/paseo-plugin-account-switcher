@@ -15,6 +15,7 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 - **Keep your setup.** Profiles separate credentials while sharing provider settings, skills, and session history.
 - **Track account limits.** See used and remaining percentages, reset times, and freshness for every reported window.
 - **Switch from the keyboard.** Type `/account work` in a chat, or pick **Make “Work” the Codex default** in the Command Center (⌘K).
+- **See it in the chat.** A line in the chat records each applied switch, and why a new agent did not start on the default.
 - **Use a default.** Choose the account used by new agents for each provider. When the limits show it would fail, a new agent starts on the account with the most room instead.
 
 ## Requirements
@@ -109,6 +110,15 @@ Type `/account` in the message field followed by an account name, or `default` f
 - `/account` alone, or the account already in use, opens the switcher.
 
 The Command Center (⌘K) lists **Make “name” the Claude default** and **Make “name” the Codex default** for every signed-in account that is not already its provider's default.
+
+### In the chat
+
+The chat records the account in a quiet line:
+
+- after an applied switch: *Account switched from Work to Second.*
+- when a new agent did not start on the default: *Started on Second: the default Work has used up a limit.* The other reasons are a plan without the agent's model and a default that needs sign-in.
+
+These lines live in the daemon's memory, like other plugin timeline rows: they stay through reconnects and refetches, but not a daemon restart.
 
 You can select an account during a response, but it is **never applied automatically**. **Cancel selection** clears it. **All accounts** opens the full account list.
 

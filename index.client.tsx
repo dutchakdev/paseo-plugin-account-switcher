@@ -2,8 +2,10 @@ import type { PluginButtonIconProps, PluginClientContext, PluginSurfaceProps } f
 import { Icon, Modal } from "@getpaseo/plugin/client/react-native";
 import { useSyncExternalStore } from "react";
 import { applySwitch, listAccounts, listUsage, prepareSwitch } from "./shared/contracts";
+import { ACCOUNT_NOTE_KIND, ACCOUNT_NOTE_VERSION, AccountNoteSchema } from "./shared/timeline";
 import { AccountsSurface } from "./client/accounts";
 import { runAccountCommand } from "./client/command";
+import { AccountNoteRow } from "./client/note";
 import { supportedProvider } from "./client/format";
 import { createClientRuntime } from "./client/runtime";
 import { AgentSwitcher } from "./client/switcher";
@@ -48,5 +50,6 @@ export default function contribute(client: PluginClientContext) {
         openSwitcher: () => runtime.openSwitcher(target),
       }).finally(runtime.refresh);
     } });
-  return () => { runtime.stop(); removeSlash(); removeCommand(); removeSidebar(); removeSurface(); };
+  const removeNote = client.addTimelineRenderer({ kind: ACCOUNT_NOTE_KIND, version: ACCOUNT_NOTE_VERSION, schema: AccountNoteSchema, Component: AccountNoteRow });
+  return () => { runtime.stop(); removeNote(); removeSlash(); removeCommand(); removeSidebar(); removeSurface(); };
 }

@@ -62,6 +62,8 @@ flowchart TD
   G --> H[bind the first ready account]
 ```
 
+The choice and each applied switch are recorded as `account-note` plugin timeline rows (`shared/timeline.ts`). A creation note is held until `agent.created`, which Paseo emits after `agent.session_open` once the agent's timeline exists. Rows live in the daemon's in-memory timeline and do not survive a daemon restart; a host that refuses a row only logs it.
+
 Exhausted means a window at 100% whose reset time has not passed. Room is the percent left in the tightest window still in effect. Only signed-in accounts without a sign-in in progress are spares. Its binding starts unconfirmed until startup is observed. Existing agents keep their bindings. Archived agents retain theirs for resume; cleanup of deleted agents requires a complete, successful agent listing.
 
 Native reload preserves the native session ID, but does not offer an atomic idle-and-reload operation. Concurrent messages from another client remain a race that callers must avoid. Real switching, compaction, child sessions, and rewind require live acceptance beyond synthetic tests.
