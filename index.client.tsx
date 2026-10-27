@@ -6,7 +6,7 @@ import { FAILOVER_KIND, FAILOVER_VERSION, FailoverRowSchema } from "./shared/fai
 import { ACCOUNT_NOTE_KIND, ACCOUNT_NOTE_VERSION, AccountNoteSchema } from "./shared/timeline";
 import { AccountsSurface } from "./client/accounts";
 import { runAccountCommand } from "./client/command";
-import { FailoverRowView } from "./client/failover-row";
+import { createFailoverRow } from "./client/failover-row";
 import { AccountNoteRow } from "./client/note";
 import { supportedProvider } from "./client/format";
 import { createClientRuntime } from "./client/runtime";
@@ -53,6 +53,8 @@ export default function contribute(client: PluginClientContext) {
       }).finally(runtime.refresh);
     } });
   const removeNote = client.addTimelineRenderer({ kind: ACCOUNT_NOTE_KIND, version: ACCOUNT_NOTE_VERSION, schema: AccountNoteSchema, Component: AccountNoteRow });
+  // Created once, so the renderer keeps its identity; the RPC is called on the client, which may rely on its receiver.
+  const FailoverRowView = createFailoverRow((contract, input) => client.rpc(contract, input));
   const removeFailover = client.addTimelineRenderer({ kind: FAILOVER_KIND, version: FAILOVER_VERSION, schema: FailoverRowSchema, Component: FailoverRowView });
   return () => { runtime.stop(); removeFailover(); removeNote(); removeSlash(); removeCommand(); removeScreen(); };
 }

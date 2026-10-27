@@ -58,19 +58,26 @@ export default function contribute(server:PluginServerContext){
   return binding;
  });
  const guard=new AutoFailoverGuard();
+ // Agents with a failover switch under way, from its "switching" row until the row tells the outcome.
+ const switching=new Set<string>();
  // Applies a failover row's switch the way `/account` does: the same service checks the account, that the agent is idle
  // and has no pending permission, and the launch receipt. The row, not a separate note, tells the outcome, and a refusal
  // is shown there before it is rethrown.
  const switchOver=async(paseo:PaseoApi,agentId:string,row:FailoverRow,toId:string,done:"switched"|"auto")=>{
-  await appendFailoverRow(paseo,agentId,{...row,state:"switching",error:null});
+  // Claimed before any await. A second switch would only be refused by the service, and its row would cover the first one's.
+  if(switching.has(agentId))throw new Error("An account switch is already in progress.");
+  switching.add(agentId);
   try{
-   await controller.ensureRuntime(paseo);
-   const switcher=controller.switcher(paseo);
-   await switcher.prepare(agentId,toId);
-   await switcher.apply(agentId,toId);
-  }catch(error){await appendFailoverRow(paseo,agentId,{...row,state:"failed",error:reason(error)});throw error;}
-  void controller.usage.refresh(toId).catch(()=>{});
-  await appendFailoverRow(paseo,agentId,{...row,state:done,error:null});
+   await appendFailoverRow(paseo,agentId,{...row,state:"switching",error:null});
+   try{
+    await controller.ensureRuntime(paseo);
+    const switcher=controller.switcher(paseo);
+    await switcher.prepare(agentId,toId);
+    await switcher.apply(agentId,toId);
+   }catch(error){await appendFailoverRow(paseo,agentId,{...row,state:"failed",error:reason(error)});throw error;}
+   void controller.usage.refresh(toId).catch(()=>{});
+   await appendFailoverRow(paseo,agentId,{...row,state:done,error:null});
+  }finally{switching.delete(agentId);}
   // The switch stands even if the prompt is not delivered; the chat is idle on the new account either way.
   await paseo.agents.ref(agentId).send(CONTINUE).catch(error=>console.error(`Could not ask agent ${agentId} to continue on the new account: ${reason(error)}`));
  };
@@ -124,22 +131,28 @@ export default function contribute(server:PluginServerContext){
  const removeTurnEnded=server.on("agent.turn_ended",async({agent,turnId,outcome},{paseo})=>{
   const provider=agent.provider;
   if(outcome.kind!=="failed"||(provider!=="claude"&&provider!=="codex"))return;
+  const rowId=`${FAILOVER_KIND}-${agent.id}-${turnId??Date.now()}`;
+  // A switch under way, or the automatic one this turn already had, owns the agent's row: a repeated or concurrent
+  // report of a failed turn adds nothing, so it can neither roll that row back nor start a second switch.
+  const settled=(state:Registry)=>switching.has(agent.id)||guard.hasTurn(agent.id,rowId,Date.now())||state.bindings.some(b=>b.agentId===agent.id&&b.status==="switching");
   try{
    await controller.ready;
    const state=await controller.store.read();
    // Without that provider's launcher the CLI runs on the system login, so a switch could not take effect.
-   if(!state.integration.enabled||!state.integration.providers.includes(provider))return;
+   if(!state.integration.enabled||!state.integration.providers.includes(provider)||settled(state))return;
    const fromId=currentAccountOf(state,agent.id,provider),from=labelOf(state,fromId);
    if(!fromId||!from)return;
    // A full window read earlier still counts until its reset, so the account is read again before deciding.
    const [usage,snapshot]=await Promise.all([controller.usage.refresh(fromId),paseo.agents.ref(agent.id).refresh().catch(()=>null)]);
+   // A switch may have started or finished during those reads; from here to the row nothing awaits.
+   const latest=await controller.store.read();
+   if(settled(latest)||currentAccountOf(latest,agent.id,provider)!==fromId)return;
    const model=snapshot?.agent.runtimeInfo?.model||snapshot?.agent.model||null,now=Date.now();
-   const decision=failoverDecision({currentId:fromId,accounts:state.accounts.filter(a=>a.provider===provider),usage,model,now});
+   const decision=failoverDecision({currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider),usage,model,now});
    if(!decision)return;
-   const rowId=`${FAILOVER_KIND}-${agent.id}-${turnId??now}`;
-   const offer=decision.kind==="offer"?state.accounts.find(a=>a.id===decision.toId):undefined;
+   const offer=decision.kind==="offer"?latest.accounts.find(a=>a.id===decision.toId):undefined;
    const row:FailoverRow={rowId,state:offer?"offered":"none",from,to:offer?.label??null,toId:offer?.id??null,resetsAt:decision.resetsAt,error:null};
-   if(row.toId&&state.autoFailover[provider]&&guard.allow(agent.id,rowId,fromId,row.toId,now)){
+   if(row.toId&&latest.autoFailover[provider]&&guard.allow(agent.id,rowId,fromId,row.toId,now)){
     // Recorded before the first await of the switch: the guard's check and record must not be split.
     guard.record(agent.id,rowId,fromId,row.toId,now);
     // The switch reloads the agent and waits for its launch, longer than Paseo waits for a hook; the row reports it.

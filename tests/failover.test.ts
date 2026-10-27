@@ -134,4 +134,13 @@ describe("when the plugin may switch an agent on its own", () => {
     expect(guard.allow("agent", "t1", "a", "b", t0)).toBe(true);
     expect(guard.allow("agent", "t1", "a", "b", t0)).toBe(true);
   });
+  it("tells whether a turn already had its automatic switch, for that agent and within the hour", () => {
+    const guard = new AutoFailoverGuard();
+    expect(guard.hasTurn("agent", "t1", t0)).toBe(false);
+    guard.record("agent", "t1", "a", "b", t0);
+    expect(guard.hasTurn("agent", "t1", t0 + minute)).toBe(true);
+    expect(guard.hasTurn("agent", "t2", t0 + minute)).toBe(false);
+    expect(guard.hasTurn("other", "t1", t0 + minute)).toBe(false);
+    expect(guard.hasTurn("agent", "t1", t0 + hour)).toBe(false);
+  });
 });

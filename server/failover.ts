@@ -42,6 +42,11 @@ export class AutoFailoverGuard {
     return recent.length < MAX_PER_HOUR && !recent.some(item => item.turnKey === turnKey || item.fromId === toId);
   }
 
+  /** Whether this turn already had its automatic switch: a turn reported again must not be offered or switched twice. */
+  hasTurn(agentId: string, turnKey: string, now: number): boolean {
+    return this.recent(agentId, now).some(item => item.turnKey === turnKey);
+  }
+
   record(agentId: string, turnKey: string, fromId: string, toId: string, now: number): void {
     this.switches.set(agentId, [...this.recent(agentId, now), { turnKey, fromId, toId, at: now }]);
   }

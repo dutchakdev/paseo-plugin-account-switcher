@@ -7,7 +7,7 @@ const controller = vi.hoisted(() => {
   const prepare = vi.fn(async (agentId: string, accountId: string | null): Promise<unknown> => ({ agentId, provider: "codex", currentAccountId: "work", pendingAccountId: accountId }));
   const registry = {
     accounts: [{ id: "system-codex", label: "Current CLI · Codex", source: "system", provider: "codex", home: "/home/me/.codex", authStatus: "ready", loginToken: null }, { id: "work", label: "Work", source: "managed", provider: "codex", home: "/profiles/work", authStatus: "ready", loginToken: null }, { id: "second", label: "Second", source: "managed", provider: "codex", home: "/profiles/second", authStatus: "ready", loginToken: null }],
-    bindings: [{ agentId: "agent-1", provider: "codex", currentAccountId: "work", launchAccountId: "work" }] as { agentId: string; provider: string; currentAccountId: string | null; launchAccountId: string | null }[],
+    bindings: [{ agentId: "agent-1", provider: "codex", currentAccountId: "work", launchAccountId: "work" }] as { agentId: string; provider: string; currentAccountId: string | null; launchAccountId: string | null; status?: string }[],
     integration: { enabled: true, error: null, providers: ["claude", "codex"] },
     autoFailover: { claude: false, codex: false },
   };
@@ -297,9 +297,50 @@ describe("a turn that fails on a used-up account", () => {
       controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: from, launchAccountId: from }];
       readings(reading(from, 100), reading(to, 0), reading("work", 100), reading("second", 100));
       await on.get("agent.turn_ended")!({ ...ended(), turnId }, { paseo });
+      // Each switch settles before the next turn fails; one still under way would stop the next on its own.
+      await vi.waitFor(() => expect(rows(appended).at(-1).data.state).toMatch(/^(auto|offered)$/));
     }
-    await vi.waitFor(() => expect(controller.apply).toHaveBeenCalledTimes(3));
+    expect(controller.apply).toHaveBeenCalledTimes(3);
     expect(rows(appended).filter(item => item.id === "account-failover-agent-1-t4").map(item => item.data.state)).toEqual(["offered"]);
+  });
+
+  it("leaves an unresolved automatic switch alone when the turn is reported again, with or without its id", async () => {
+    controller.registry.autoFailover.codex = true;
+    let finish!: () => void;
+    controller.apply.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ agentId: "agent-1", provider: "codex", currentAccountId: "second" }); }));
+    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(ended(), { paseo });
+    await vi.waitFor(() => expect(controller.apply).toHaveBeenCalledOnce());
+    await on.get("agent.turn_ended")!(ended(), { paseo });
+    await on.get("agent.turn_ended")!({ ...ended(), turnId: null }, { paseo });
+    expect(rows(appended).map(item => [item.id, item.data.state])).toEqual([[rowId, "switching"]]);
+    expect(controller.refresh).toHaveBeenCalledOnce();
+    finish();
+    await vi.waitFor(() => expect(sent).toEqual([{ agentId: "agent-1", text: "Continue." }]));
+    // Once switched, the same turn reported again adds nothing: the row keeps saying it switched.
+    await on.get("agent.turn_ended")!(ended(), { paseo });
+    expect(rows(appended).map(item => [item.id, item.data.state])).toEqual([[rowId, "switching"], [rowId, "auto"]]);
+    expect(controller.prepare).toHaveBeenCalledOnce();
+    expect(controller.apply).toHaveBeenCalledOnce();
+  });
+  it("adds nothing while the agent's account is being switched elsewhere", async () => {
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: "work", launchAccountId: "second", status: "switching" }];
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(ended(), { paseo });
+    expect(appended).toEqual([]);
+    expect(controller.refresh).not.toHaveBeenCalled();
+  });
+  it("refuses a second click while the first switch is under way, leaving its row as it is", async () => {
+    let finish!: () => void;
+    controller.apply.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ agentId: "agent-1", provider: "codex", currentAccountId: "second" }); }));
+    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
+    const first = handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo });
+    await vi.waitFor(() => expect(controller.apply).toHaveBeenCalledOnce());
+    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo })).rejects.toThrow("An account switch is already in progress.");
+    expect(rows(appended).map(item => item.data.state)).toEqual(["switching"]);
+    finish();
+    await expect(first).resolves.toEqual({});
+    expect(rows(appended).map(item => item.data.state)).toEqual(["switching", "switched"]);
   });
 
   it("applies the offered switch from the row's button and asks the agent to continue", async () => {
