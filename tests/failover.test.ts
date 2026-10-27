@@ -26,10 +26,18 @@ describe("whether a failed turn ran out of its account's limit", () => {
     const usage = [snapshot("current", [window(100)]), snapshot("unknown", [window(null)])];
     expect(decide({ accounts: [ready("current"), ready("unknown")], usage })).toMatchObject({ kind: "offer", toId: "unknown" });
   });
-  it("reports the earliest reset of the account-wide windows that are full", () => {
+  // The account stays blocked until its last full account-wide window resets, so that is the time to show.
+  it("reports the latest reset of the account-wide windows that are full", () => {
+    const fiveHours = "2026-10-27T14:00:00Z", week = "2026-10-30T12:00:00Z";
+    const usage = [snapshot("current", [window(100, fiveHours), window(100, week)]), ...spares];
+    expect(decide({ accounts, usage })).toMatchObject({ kind: "offer", toId: "roomy", resetsAt: week });
+    expect(decide({ accounts, usage: [snapshot("current", [window(100, week), window(100, fiveHours)]), ...spares] })).toMatchObject({ kind: "offer", resetsAt: week });
+    expect(decide({ accounts: [ready("current")], usage: usage.slice(0, 1) })).toEqual({ kind: "none", fromId: "current", resetsAt: week });
+  });
+  it("leaves out of the reset time every window that does not block the account", () => {
     const usage = [snapshot("current", [
-      window(100, later), window(100, soon), window(100, "2026-10-27T12:30:00Z", "model"),
-      window(100, "2026-10-27T12:15:00Z", "spend"), window(100, earlier), window(50, "2026-10-27T12:01:00Z"),
+      window(100, soon), window(100, "2026-11-01T12:00:00Z", "model"), window(100, "2026-11-02T12:00:00Z", "spend"),
+      window(100, earlier), window(50, "2026-11-03T12:00:00Z"), window(null, "2026-11-04T12:00:00Z"),
     ]), ...spares];
     expect(decide({ accounts, usage })).toMatchObject({ kind: "offer", resetsAt: soon });
   });

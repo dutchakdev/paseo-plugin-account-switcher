@@ -8,8 +8,9 @@ export type FailoverDecision =
 /** What to do after an agent's turn failed on `currentId`. Paseo does not say why a turn failed, so the only evidence
  * is the plugin's own readings: null unless they show the account is used up (a full account-wide window until a future
  * reset, or the provider's own "not allowed"). A plan that lacks the model is not a limit and gives null as well.
- * Readings are taken as given; the caller refreshes them first. `resetsAt` is the earliest end of the full windows,
- * null when the evidence carries none. The replacement is the first account a new agent would try instead. */
+ * Readings are taken as given; the caller refreshes them first. `resetsAt` is the latest end of the full windows:
+ * the account stays blocked until the last of them resets; null when the evidence carries none.
+ * The replacement is the first account a new agent would try instead. */
 export function failoverDecision(input: { currentId: string; accounts: readonly SelectionAccount[]; usage: readonly UsageSnapshot[]; model: string | null; now: number }): FailoverDecision | null {
   const { currentId, usage, now } = input;
   const evidence = { defaultId: currentId, accounts: input.accounts, usage, model: input.model, now };
@@ -17,7 +18,7 @@ export function failoverDecision(input: { currentId: string; accounts: readonly 
   const resets = (usage.find(item => item.accountId === currentId)?.windows ?? [])
     .filter(window => binding(window) && window.usedPercent !== null && window.usedPercent >= 100 && window.resetsAt !== null && inEffect(window, now))
     .map(window => window.resetsAt!)
-    .sort((a, b) => Date.parse(a) - Date.parse(b));
+    .sort((a, b) => Date.parse(b) - Date.parse(a));
   const resetsAt = resets[0] ?? null;
   const toId = launchOrder(evidence).find(id => id !== currentId);
   return toId ? { kind: "offer", fromId: currentId, toId, resetsAt } : { kind: "none", fromId: currentId, resetsAt };
