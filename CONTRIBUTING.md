@@ -44,7 +44,14 @@ Versions only move forward: the workflow refuses a version below the newest one 
 
 If a run fails for a reason outside the tagged commit, such as npm settings or a flaky runner, fix it and run the workflow again from the same tag, with **Run workflow → Use workflow from → Tags** or `gh workflow run release.yml --ref vX.Y.Z`. A run started from a branch stops at once. A fix to the code needs a new version. A version already on npm is not published again, and the run only completes the GitHub release; npm can take a few minutes to list a new version, so wait before retrying right after a publish.
 
-The plugin directory on paseo.sh pins an npm version. A new npm release produces a bump pull request in [getpaseo/plugins](https://github.com/getpaseo/plugins), and the listing changes once a reviewer approves it. The listing text comes from `OVERVIEW.md` in the package; update it when setup or behavior changes, and keep install commands out of it: the directory rejects them, and so does `scripts/check-package.mjs`. Paseo Cafe expects the npm version to match `package.json` on `main`, so push the tag right after the release commit.
+The plugin directory on paseo.sh pins an npm version, so a release is not finished until that pin moves. Its bot proposes new npm versions only at 05:17 and 17:17 UTC; do not wait for it. Right after npm lists the version, open the bump yourself in a fork of [getpaseo/plugins](https://github.com/getpaseo/plugins), changing only `plugins/dutchakdev/account-switcher.json` the way `bump.yml` does:
+
+1. `artifact.version`, `artifact.resolved` and `artifact.integrity` from `npm view paseo-plugin-account-switcher@X.Y.Z dist`.
+2. `repository.commit`: `git rev-parse 'vX.Y.Z^{commit}'`.
+3. `reviewedAt`: the current UTC time to the second; leave `submittedAt`, `publishedAt`, categories and `listing` alone.
+4. Commit, then run `node scripts/validate.ts --online --changed --base upstream/main` and `npm test` in the registry checkout, and open the pull request titled "Bump dutchakdev/account-switcher to X.Y.Z".
+
+The listing changes once a reviewer approves it. The listing text comes from `OVERVIEW.md` in the package; update it when setup or behavior changes, and keep install commands out of it: the directory rejects them, and so does `scripts/check-package.mjs`. Paseo Cafe expects the npm version to match `package.json` on `main`, so push the tag right after the release commit.
 
 Publishing uses npm trusted publishing, so the repository stores no npm token. The package's trusted publisher on npmjs.com names repository `dutchakdev/paseo-plugin-account-switcher`, workflow `release.yml`, and environment `npm`. Keep that environment limited to `v*` tags in the repository settings, since npm does not check which ref a run started from.
 
