@@ -3,12 +3,15 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
+import { transformSync } from "esbuild";
 import { createLoginProcess, type LoginProcess } from "../server/login-process";
 
 type Pids = { leader: number; supervisor: number; descendant?: number };
 type Fixture = { root: string; cli: string; receipt: string; pids: string; env: NodeJS.ProcessEnv; login?: LoginProcess; owner?: ChildProcess; watchdog?: number };
 const fixtures: Fixture[] = [];
+
+/** The module as plain CommonJS for a child `node`; TypeScript 7 has no transpile API, esbuild strips the types. */
+const commonJs = (source: string) => transformSync(source, { loader: "ts", format: "cjs", target: "es2022" }).code;
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
@@ -95,7 +98,7 @@ describe("background login process supervisor", () => {
     // Load the same public API in a separate owner process, so SIGKILL exercises
     // real IPC disconnect rather than a simulated cancellation callback.
     const source = await readFile(new URL("../server/login-process.ts", import.meta.url), "utf8");
-    const compiled = transpileModule(source, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } }).outputText;
+    const compiled = commonJs(source);
     const modulePath = join(value.root, "login-process.cjs");
     const ownerPath = join(value.root, "owner.cjs");
     await writeFile(modulePath, compiled);
@@ -139,7 +142,7 @@ login.ready().then(()=>login.start());setInterval(()=>{},1000);
     const modulePath = join(value.root, "login-process.cjs");
     const ownerPath = join(value.root, "owner.cjs");
     const watchdogPath = join(value.root, "watchdog.json");
-    await writeFile(modulePath, transpileModule(source, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } }).outputText);
+    await writeFile(modulePath, commonJs(source));
     await writeFile(ownerPath, `
 const fs=require('node:fs'),{createLoginProcess}=require(${JSON.stringify(modulePath)});
 const login=createLoginProcess({command:[process.execPath,${JSON.stringify(value.cli)}],args:['group',${JSON.stringify(value.pids)}],env:process.env,cwd:${JSON.stringify(value.root)},receiptPath:${JSON.stringify(value.receipt)},loginToken:'fixture-before-launch',onData(){},onExit(){}});

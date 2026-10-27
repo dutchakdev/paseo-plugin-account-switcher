@@ -27,6 +27,8 @@ npm test -- tests/switching.test.ts
 
 Before submitting, run `npm run check`, which runs the build, typecheck, and full test suite in that order.
 
+Typechecking runs TypeScript 7, the native compiler. Its npm package has no `tsserver`, no `lib` files and no JavaScript API, so an editor set to the workspace's TypeScript shows no types (use the editor's bundled TypeScript), and code that needs to transpile TypeScript, like `tests/login-process.test.ts`, uses esbuild's `transformSync`. `vite` is a direct development dependency because Vitest 5 requires it as a peer, and the `--legacy-peer-deps` install in CI skips peers under npm 11 (Node 24). The build refuses a bundled dependency whose license has not been reviewed: when Dependabot moves `zod` or `@iarna/toml`, compare the new `LICENSE` with the file in `licenses/` and update `scripts/build.mjs` and `THIRD_PARTY_NOTICES.md`.
+
 ## Changelog and releases
 
 Versions follow [semantic versioning](https://semver.org). A pull request with a user-visible change adds an entry under `## Unreleased` at the top of `CHANGELOG.md`, in the `Added`, `Changed`, `Fixed`, or `Removed` group. The release notes are that section, so write entries for people who run the plugin.

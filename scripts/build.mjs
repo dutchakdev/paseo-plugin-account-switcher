@@ -9,7 +9,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const reviewedLicenses = {
   "@getpaseo/plugin": { version: "0.8.0", file: "paseo-0.8.0.txt" },
   "@iarna/toml": { version: "2.2.5", file: "iarna-toml-2.2.5.txt", installed: "LICENSE" },
-  zod: { version: "4.6.5", file: "zod-4.6.5.txt", installed: "LICENSE" },
+  zod: { version: "4.6.7", file: "zod-4.6.7.txt", installed: "LICENSE" },
 };
 const result = await build({
   absWorkingDir: root,
