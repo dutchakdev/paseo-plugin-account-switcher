@@ -10,7 +10,7 @@ import { AccountStore, accountFrom, boundAccount, type Registry, type StoredAcco
 import { prepareProfile } from "./profiles";
 import { accountCommand, accountEnvironment, launchLogin, probeAccount, removeAccountCredentials } from "./auth";
 import { installIntegration, restoreIntegration, writeLaunchers, prepareRuntime, reconcileIntegration } from "./integration";
-import { SwitchService } from "./switching";
+import { SwitchRefusal, SwitchService } from "./switching";
 import { createUsageService, readCredentialVersion, type AccountReadOptions, type QuotaAccount } from "./usage";
 import { renewExpiredClaudeToken } from "./usage/claude";
 import { LoginSessions, type LoginDependencies } from "./login";
@@ -321,19 +321,19 @@ export class AccountController {
  }
  switcher(paseo:PaseoApi):SwitchService {
   let service=this.switches.get(paseo);if(service)return service;
-  const requireIntegration=async()=>{if(this.integrationChanging)throw new Error("An integration change is still in progress.");await reconcileIntegration(paseo,this.store);if(!(await this.store.read()).integration.enabled)throw new Error("Account integration is no longer active. Check its settings and enable it again.");};
+  const requireIntegration=async()=>{if(this.integrationChanging)throw new SwitchRefusal("An integration change is still in progress.");await reconcileIntegration(paseo,this.store);if(!(await this.store.read()).integration.enabled)throw new SwitchRefusal("Account integration is no longer active. Check its settings and enable it again.");};
   service=new SwitchService({store:this.store,applying:this.applying,usage:()=>this.usage.list(),checkAccount:async id=>{await requireIntegration();return this.checkAccount(id);},inspect:async(id)=>{
-   const result=await paseo.agents.ref(id).refresh();if(!result)throw new Error("Agent not found.");
+   const result=await paseo.agents.ref(id).refresh();if(!result)throw new SwitchRefusal("Agent not found.");
    const a=result.agent;
    return{provider:a.provider,busy:a.status==="running"||a.status==="initializing"||!!a.activeTurn||a.pendingPermissions.length>0,archived:!!a.archivedAt};
   },reload:async(id)=>{
    await requireIntegration();
    const config=JSON.parse(await readFile(join(dirname(this.store.root),"config.json"),"utf8"));
    const listen=config.daemon?.listen;
-   if(typeof listen!=="string"||!listen)throw new Error("Could not identify the daemon for reload.");
+   if(typeof listen!=="string"||!listen)throw new SwitchRefusal("Could not identify the daemon for reload.");
    const host=listen.replace(/^0\.0\.0\.0:/,"127.0.0.1:");
    try{await execFileAsync("paseo",["agent","reload",id,"--json","--host",host],{timeout:120_000,maxBuffer:1024*1024,env:process.env});}
-   catch{throw new Error("The native agent reload failed. Check the agent status and try again.");}
+   catch{throw new SwitchRefusal("The native agent reload failed. Check the agent status and try again.");}
    // Paseo 0.11 reloads into an idle session and spawns the CLI on first use; listing
    // commands starts it so the launcher can confirm the account. Older hosts already started it.
    const agent=paseo.agents.ref(id) as {commands?:()=>Promise<unknown>};

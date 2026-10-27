@@ -28,7 +28,8 @@ export function createFailoverRow(rpc: PluginCommandCapabilities["rpc"]) {
     const press = () => {
       if (!action || lock.current) return;
       lock.current = true; setPending(true); setError(null);
-      void rpc(applyFailover, { agentId, accountId: action.accountId, rowId: row.rowId })
+      // The account the offer moves from lets the daemon refuse an offer that is out of date; older rows lack it.
+      void rpc(applyFailover, { agentId, accountId: action.accountId, rowId: row.rowId, ...(row.fromId ? { fromId: row.fromId } : {}) })
         .catch((failure: unknown) => setError(errorMessage(failure)))
         .finally(() => { lock.current = false; setPending(false); });
     };

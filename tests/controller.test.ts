@@ -43,6 +43,7 @@ vi.mock("../server/usage/claude", () => ({ renewExpiredClaudeToken: mocks.renewE
 
 import { AccountController } from "../server/controller";
 import { AccountStore, accountFrom } from "../server/store";
+import { SwitchRefusal } from "../server/switching";
 
 const roots: string[] = [];
 const controllers: AccountController[] = [];
@@ -381,6 +382,14 @@ describe("confirmation token lifecycle", () => {
     // Confirmed for good, as the app's polling would have done.
     expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: account.id, launchToken: null, registrationObserved: true });
     expect(await controller.accountOf(starting, "scheduled", "codex")).toBe(account.id);
+  });
+
+  it("refuses a switch for an agent Paseo no longer has with a message written for the user", async () => {
+    const { controller, account } = await fixture();
+    const gone = { agents: { ref: () => ({ refresh: async () => null }) } } as unknown as PaseoApi;
+    const refusal = controller.switcher(gone).prepare("gone", account.id);
+    await expect(refusal).rejects.toThrow("Agent not found.");
+    await expect(refusal).rejects.toBeInstanceOf(SwitchRefusal);
   });
 
   it("does not confirm a pending receipt while integration is disabled", async () => {

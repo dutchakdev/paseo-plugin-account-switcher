@@ -11,6 +11,9 @@ export const FailoverRowSchema = z.object({
   // switched / auto: done by the button / automatically; failed: `error` says why.
   state: z.enum(["offered", "none", "switching", "switched", "auto", "failed"]),
   from: z.string(),
+  // The account `from` names. The button's switch is refused once the agent runs on another; rows from before this
+  // field skip that check.
+  fromId: z.string().optional(),
   to: z.string().nullable(),
   toId: z.string().nullable(),
   // When the account that ran out is usable again; null when the provider gave no time.

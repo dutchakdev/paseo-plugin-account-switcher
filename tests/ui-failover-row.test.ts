@@ -80,6 +80,11 @@ describe("the failover row's button", () => {
     expect(button(failed)).toBeUndefined();
     expect(text(failed)).toBe("Could not switch to Second: Wait for the agent to finish its response.");
   });
+  it("tells the RPC which account the offer moves the agent from, so an out-of-date offer is refused", () => {
+    const rpc = vi.fn(async () => ({}));
+    button(mount(rpc)({ ...offered, fromId: "work" }))!.props.onPress!();
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(applyFailover, { agentId: "agent-1", accountId: "second", rowId, fromId: "work" });
+  });
   it("has no button once the switch is no longer on offer", () => {
     const render = mount(vi.fn());
     for (const state of ["none", "switching", "switched", "auto", "failed"] as const) expect(button(render({ ...offered, state }))).toBeUndefined();

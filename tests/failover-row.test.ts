@@ -47,7 +47,7 @@ describe("the failover row in the chat", () => {
       const value = row({ state, error: state === "failed" ? "busy" : null });
       expect(FailoverRowSchema.parse(JSON.parse(JSON.stringify(value)))).toEqual(value);
     }
-    const quiet = row({ state: "auto", resumes: false });
+    const quiet = row({ state: "auto", fromId: "work", resumes: false });
     expect(FailoverRowSchema.parse(JSON.parse(JSON.stringify(quiet)))).toEqual(quiet);
   });
   it("rejects data from another shape rather than rendering it", () => {

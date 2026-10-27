@@ -6,6 +6,7 @@ import type { PaseoApi } from "./server/paseo-api";
 import { registerPaseoUsage } from "./server/paseo-usage";
 import { profileEnv } from "./server/session-env";
 import { accountFrom, boundAccount, type Registry } from "./server/store";
+import { SwitchRefusal } from "./server/switching";
 import { appendAccountNote, appendFailoverRow } from "./server/timeline";
 import { FAILOVER_KIND, type FailoverRow } from "./shared/failover";
 import type { AccountNote } from "./shared/timeline";
@@ -15,6 +16,9 @@ const MODEL_ENV="PASEO_ACCOUNT_SWITCHER_MODEL";
 // The prompt that resumes an agent's work on the account it was switched to.
 const CONTINUE="Continue.";
 const reason=(error:unknown)=>error instanceof Error?error.message:String(error);
+// What a failover row shows for a failure that is not one of the switch service's own refusals: their messages are
+// written for the user, any other error's may carry paths or internals.
+const SWITCH_FAILED="The switch failed; the plugin log has details.";
 
 export default function contribute(server:PluginServerContext){
  const controller=new AccountController();
@@ -59,20 +63,25 @@ export default function contribute(server:PluginServerContext){
  // Agents with a failover switch under way, from its "switching" row until the row tells the outcome.
  const switching=new Set<string>();
  // Applies a failover row's switch the way `/account` does: the same service checks the account, that the agent is idle
- // and has no pending permission, and the launch receipt. The row, not a separate note, tells the outcome, and a refusal
- // is shown there before it is rethrown. "Continue." follows unless the row says the switch does not resume the agent.
+ // and has no pending permission, and the launch receipt. The row, not a separate note, tells the outcome, and a failure
+ // is shown there before it is rethrown: a refusal by its message, anything else as SWITCH_FAILED, its detail logged.
+ // "Continue." follows unless the row says the switch does not resume the agent.
  const switchOver=async(paseo:PaseoApi,agentId:string,row:FailoverRow,toId:string,done:"switched"|"auto")=>{
   // Claimed before any await. A second switch would only be refused by the service, and its row would cover the first one's.
-  if(switching.has(agentId))throw new Error("An account switch is already in progress.");
+  if(switching.has(agentId))throw new SwitchRefusal("An account switch is already in progress.");
   switching.add(agentId);
   try{
    await appendFailoverRow(paseo,agentId,{...row,state:"switching",error:null});
    try{
     await controller.ensureRuntime(paseo);
-    const switcher=controller.switcher(paseo);
-    await switcher.prepare(agentId,toId);
-    await switcher.apply(agentId,toId);
-   }catch(error){await appendFailoverRow(paseo,agentId,{...row,state:"failed",error:reason(error)});throw error;}
+    // One step: a refusal before the switch starts leaves no selection the user never made.
+    await controller.switcher(paseo).switchTo(agentId,toId);
+   }catch(error){
+    const refused=error instanceof SwitchRefusal;
+    if(!refused)console.error(`Could not switch agent ${agentId} to account ${toId}: ${reason(error)}`);
+    await appendFailoverRow(paseo,agentId,{...row,state:"failed",error:refused?error.message:SWITCH_FAILED});
+    throw error;
+   }
    void controller.usage.refresh(toId).catch(()=>{});
    await appendFailoverRow(paseo,agentId,{...row,state:done,error:null});
   }finally{switching.delete(agentId);}
@@ -81,16 +90,23 @@ export default function contribute(server:PluginServerContext){
   await paseo.agents.ref(agentId).send(CONTINUE).catch(error=>console.error(`Could not ask agent ${agentId} to continue on the new account: ${reason(error)}`));
  };
  server.handle(rpc.setAutoFailover,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.autoFailover[provider]=enabled;});return{};});
- server.handle(rpc.applyFailover,async({agentId,accountId,rowId},{paseo})=>{
+ server.handle(rpc.applyFailover,async({agentId,accountId,rowId,fromId},{paseo})=>{
   // Only this agent's own failover row may be rewritten with the outcome.
   if(!rowId.startsWith(`${FAILOVER_KIND}-${agentId}-`))throw new Error("The switch offer belongs to another agent.");
+  // A switch under way keeps its row; checking first also keeps the stale-offer check below from rewriting it.
+  if(switching.has(agentId))throw new SwitchRefusal("An account switch is already in progress.");
   await controller.ready;
   const state=await controller.store.read(),target=state.accounts.find(a=>a.id===accountId);
   if(!target)throw new Error("Account not found.");
   // Named at the click: the account the agent leaves now, with a launch not confirmed yet confirmed by its receipt.
-  const from=labelOf(state,await controller.accountOf(paseo,agentId,target.provider));
-  if(!from)throw new Error("This agent's account is not confirmed yet. Choose an account in the account switcher instead.");
-  await switchOver(paseo,agentId,{rowId,state:"offered",from,to:target.label,toId:target.id,resetsAt:null,error:null},target.id,"switched");
+  const currentId=await controller.accountOf(paseo,agentId,target.provider),from=labelOf(state,currentId);
+  if(!currentId||!from)throw new Error("This agent's account is not confirmed yet. Choose an account in the account switcher instead.");
+  const row:FailoverRow={rowId,state:"offered",from,fromId:currentId,to:target.label,toId:target.id,resetsAt:null,error:null};
+  // An offer made before the agent moved: switching now would leave an account the row never named.
+  const stale=currentId===target.id?`The agent already runs on ${target.label}.`:fromId&&fromId!==currentId?`This offer is out of date: the agent now runs on ${from}.`:null;
+  if(stale){await appendFailoverRow(paseo,agentId,{...row,state:"failed",error:stale});throw new Error(stale);}
+  try{await switchOver(paseo,agentId,row,target.id,"switched");}
+  catch(error){throw error instanceof SwitchRefusal?error:new Error(SWITCH_FAILED);}
   return{};
  });
  server.handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
@@ -158,13 +174,14 @@ export default function contribute(server:PluginServerContext){
    const decision=failoverDecision({currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider),usage,model,now});
    if(!decision)return;
    const offer=decision.kind==="offer"?latest.accounts.find(a=>a.id===decision.toId):undefined;
-   const row:FailoverRow={rowId,state:offer?"offered":"none",from,to:offer?.label??null,toId:offer?.id??null,resetsAt:decision.resetsAt,error:null};
+   const row:FailoverRow={rowId,state:offer?"offered":"none",from,fromId,to:offer?.label??null,toId:offer?.id??null,resetsAt:decision.resetsAt,error:null};
    if(row.toId&&latest.autoFailover[provider]&&guard.allow(agent.id,rowId,fromId,row.toId,now)){
     // Recorded before the first await of the switch: the guard's check and record must not be split.
     guard.record(agent.id,rowId,fromId,row.toId,now);
     // The switch reloads the agent and waits for its launch, longer than Paseo waits for a hook; the row reports it.
     // A completed turn may have finished its work, so that switch does not ask the agent to continue.
-    void switchOver(paseo,agent.id,completed?{...row,resumes:false}:row,row.toId,"auto").catch(error=>console.error(`Could not switch agent ${agent.id} automatically: ${reason(error)}`));
+    // switchOver logged any failure but a refusal already.
+    void switchOver(paseo,agent.id,completed?{...row,resumes:false}:row,row.toId,"auto").catch(error=>{if(error instanceof SwitchRefusal)console.error(`Could not switch agent ${agent.id} automatically: ${error.message}`);});
     return;
    }
    await appendFailoverRow(paseo,agent.id,row);

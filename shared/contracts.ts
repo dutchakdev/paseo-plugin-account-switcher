@@ -77,8 +77,9 @@ export const cancelLogin = defineRpc({ name: "auth.cancel", input: AccountId.ext
 export const prepareSwitch = defineRpc({ name: "switch.prepare", input: z.object({ agentId: z.string().min(1), accountId: z.string().nullable() }), output: BindingSchema });
 // `accountId`: the selection the caller saw; the switch is refused when another client changed it since.
 export const applySwitch = defineRpc({ name: "switch.apply", input: z.object({ agentId: z.string().min(1), accountId: z.string().min(1).optional() }), output: BindingSchema });
-// Applies the switch a failover row offers; `rowId` is that row, which shows the outcome.
-export const applyFailover = defineRpc({ name: "failover.apply", input: z.object({ agentId: z.string().min(1), accountId: z.string().min(1), rowId: z.string().min(1) }), output: Empty });
+// Applies the switch a failover row offers; `rowId` is that row, which shows the outcome. `fromId`: the account the offer
+// moves the agent from; the switch is refused when the agent no longer runs on it.
+export const applyFailover = defineRpc({ name: "failover.apply", input: z.object({ agentId: z.string().min(1), accountId: z.string().min(1), rowId: z.string().min(1), fromId: z.string().min(1).optional() }), output: Empty });
 export const setIntegration = defineRpc({ name: "integration.set", input: z.object({ enabled: z.boolean() }), output: StateSchema });
 export const listUsage = defineRpc({ name: "usage.list", input: z.object({ visible: z.boolean().optional() }), output: z.object({ accounts: z.array(UsageSnapshotSchema) }) });
 export const refreshUsage = defineRpc({ name: "usage.refresh", input: z.object({ accountId: z.string().optional() }), output: z.object({ accounts: z.array(UsageSnapshotSchema) }) });
