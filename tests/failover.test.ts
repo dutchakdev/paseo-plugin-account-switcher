@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AutoFailoverGuard, failoverDecision } from "../server/failover";
+import { AutoFailoverGuard, failoverDecision, mayBeUsedUp } from "../server/failover";
 import type { UsageSnapshot, UsageWindow } from "../shared/contracts";
 
 const now = Date.parse("2026-10-27T12:00:00Z");
@@ -81,6 +81,35 @@ describe("whether a failed turn ran out of its account's limit", () => {
   it("does not call a missing model a limit", () => {
     const usage = [snapshot("current", [window(100)], { models: ["gpt-6-luna"] }), snapshot("roomy", [window(0)], { models: ["gpt-6.1-sol"] })];
     expect(decide({ accounts, usage, model: "gpt-6.1-sol" })).toBeNull();
+  });
+  // A failed refresh keeps the last values as stale: within a window, use only grows until the reset.
+  it("counts a full window of a stale reading, but not a stale verdict that usage is not allowed", () => {
+    expect(decide({ accounts, usage: [snapshot("current", [window(100)], { status: "stale" }), ...spares] })).toEqual({ kind: "offer", fromId: "current", toId: "roomy", resetsAt: later });
+    expect(decide({ accounts, usage: [snapshot("current", [window(10)], { status: "stale", usageAllowed: false }), ...spares] })).toBeNull();
+  });
+  it("reports the full window's reset when the provider also says usage is not allowed", () => {
+    expect(decide({ accounts, usage: [snapshot("current", [window(100, soon)], { usageAllowed: false }), ...spares] })).toEqual({ kind: "offer", fromId: "current", toId: "roomy", resetsAt: soon });
+    // A window that already reset says nothing about when the verdict lifts.
+    expect(decide({ accounts, usage: [snapshot("current", [window(100, earlier)], { usageAllowed: false }), ...spares] })).toEqual({ kind: "offer", fromId: "current", toId: "roomy", resetsAt: null });
+  });
+});
+
+describe("whether a completed turn's account is worth reading again", () => {
+  it("is when the last reading has a full account-wide window until a later reset", () => {
+    expect(mayBeUsedUp(snapshot("current", [window(15), window(100)]), now)).toBe(true);
+    expect(mayBeUsedUp(snapshot("current", [window(100)], { status: "stale" }), now)).toBe(true);
+  });
+  it("is when the last reading says usage is not allowed, however old", () => {
+    expect(mayBeUsedUp(snapshot("current", [window(10)], { usageAllowed: false }), now)).toBe(true);
+    expect(mayBeUsedUp(snapshot("current", [], { status: "stale", usageAllowed: false }), now)).toBe(true);
+  });
+  it("is not otherwise, so an ordinary turn costs no provider request", () => {
+    expect(mayBeUsedUp(undefined, now)).toBe(false);                                                  // never read
+    expect(mayBeUsedUp(snapshot("current", [window(99)]), now)).toBe(false);
+    expect(mayBeUsedUp(snapshot("current", [window(100, earlier)]), now)).toBe(false);                // already reset
+    expect(mayBeUsedUp(snapshot("current", [window(100, null)]), now)).toBe(false);                   // no known reset
+    expect(mayBeUsedUp(snapshot("current", [window(100, later, "model"), window(100, later, "spend")]), now)).toBe(false);
+    expect(mayBeUsedUp(snapshot("current", [window(null)], { usageAllowed: true }), now)).toBe(false);
   });
 });
 

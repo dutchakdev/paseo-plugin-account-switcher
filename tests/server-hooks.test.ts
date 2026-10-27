@@ -16,10 +16,13 @@ const controller = vi.hoisted(() => {
   // The latest readings the usage service returns for every account.
   const readings: unknown[] = [];
   const refresh = vi.fn(async (_accountId?: string) => structuredClone(readings));
+  // The readings it already has, which cost no provider request.
+  const cached: unknown[] = [];
+  const list = vi.fn(async () => structuredClone(cached));
   return {
-    bindNewAgent, apply, prepare, read, change, refresh, readings, registry,
+    bindNewAgent, apply, prepare, read, change, refresh, readings, list, cached, registry,
     instance: { ready: Promise.resolve(), ensureRuntime: vi.fn(async () => {}), switcher: () => ({ bindNewAgent, apply, prepare }), close: vi.fn(async () => {}),
-      observeAgentRegistration: vi.fn(), store: { read, change }, usage: { refresh } },
+      observeAgentRegistration: vi.fn(), store: { read, change }, usage: { refresh, list } },
   };
 });
 vi.mock("../server/controller", () => ({ AccountController: function AccountController() { return controller.instance; } }));
@@ -181,23 +184,35 @@ describe("Paseo's Usage view", () => {
 describe("a turn that fails on a used-up account", () => {
   const saved = structuredClone(controller.registry);
   const resetsAt = new Date(Date.now() + 3 * 3_600_000).toISOString();
-  const reading = (accountId: string, usedPercent: number): UsageSnapshot => ({
-    accountId, provider: "codex", status: "ok", plan: null, fetchedAt: null, checkedAt: new Date().toISOString(), nextRetryAt: null, error: null,
+  const reading = (accountId: string, usedPercent: number, provider: UsageSnapshot["provider"] = "codex"): UsageSnapshot => ({
+    accountId, provider, status: "ok", plan: null, fetchedAt: null, checkedAt: new Date().toISOString(), nextRetryAt: null, error: null,
     windows: [{ id: "5h", label: "5 hours", usedPercent, windowDurationMins: 300, resetsAt, scope: "account" }],
   });
   const readings = (...items: UsageSnapshot[]) => controller.readings.splice(0, controller.readings.length, ...items);
-  const ended = (outcome: object = { kind: "failed", error: { message: "Provider error" } }, agentId = "agent-1") =>
-    ({ agent: { id: agentId, workspaceId: null, parentAgentId: null, provider: "codex", cwd: "/work", title: null }, turnId: "turn-7", outcome, timeline: [] });
+  const cached = (...items: UsageSnapshot[]) => controller.cached.splice(0, controller.cached.length, ...items);
+  const ended = (outcome: object = { kind: "failed", error: { message: "Provider error" } }, agentId = "agent-1", provider = "codex") =>
+    ({ agent: { id: agentId, workspaceId: null, parentAgentId: null, provider, cwd: "/work", title: null }, turnId: "turn-7", outcome, timeline: [] });
+  // A Claude agent on "Claude Work", with "Claude Second" to switch to.
+  const onClaude = () => {
+    const managed = controller.registry.accounts[1];
+    controller.registry.accounts.push(
+      { ...managed, id: "system-claude", label: "Current CLI · Claude", source: "system", provider: "claude", home: "/home/me/.claude" },
+      { ...managed, id: "claude-work", label: "Claude Work", provider: "claude", home: "/profiles/claude-work" },
+      { ...managed, id: "claude-second", label: "Claude Second", provider: "claude", home: "/profiles/claude-second" });
+    controller.registry.bindings = [{ agentId: "agent-1", provider: "claude", currentAccountId: "claude-work", launchAccountId: "claude-work" }];
+  };
+  // How Paseo reports a Claude turn that hit its limit: the SDK's error result has subtype "success".
+  const claudeCompleted = () => ended({ kind: "completed" }, "agent-1", "claude");
   const rowId = "account-failover-agent-1-turn-7";
   const rows = (appended: { item: any }[]) => appended.filter(entry => entry.item.kind === "account-failover").map(entry => entry.item);
   const busy = "Wait for the agent to finish its response.";
 
-  beforeEach(() => { readings(reading("work", 100), reading("second", 10)); });
+  beforeEach(() => { readings(reading("work", 100), reading("second", 10)); cached(); });
   afterEach(() => {
     Object.assign(controller.registry, structuredClone(saved));
     controller.read.mockImplementation(async () => controller.registry);
     controller.apply.mockReset(); controller.apply.mockImplementation(async (agentId: string) => ({ agentId, provider: "codex", currentAccountId: "second" }));
-    controller.prepare.mockClear(); controller.refresh.mockClear();
+    controller.prepare.mockClear(); controller.refresh.mockClear(); controller.list.mockClear();
   });
 
   it("refreshes the agent's account and offers a switch to the account with room", async () => {
@@ -223,12 +238,76 @@ describe("a turn that fails on a used-up account", () => {
     expect(controller.refresh).toHaveBeenCalledWith("system-codex");
     expect(rows(appended)[0].data).toMatchObject({ state: "offered", from: "Current CLI · Codex", to: "Second", toId: "second" });
   });
-  it("adds nothing for a completed or canceled turn, without refreshing anything", async () => {
+  it("adds nothing for a completed Codex turn or a canceled turn, without refreshing anything", async () => {
+    // Codex reports a limit stop as a failed turn, so even a used-up account's completed turn is left alone.
+    cached(reading("work", 100));
     const { on } = startAll(), { appended, paseo } = paseoRecorder();
     await on.get("agent.turn_ended")!(ended({ kind: "completed" }), { paseo });
     await on.get("agent.turn_ended")!(ended({ kind: "canceled", reason: "user" }), { paseo });
+    onClaude();
+    await on.get("agent.turn_ended")!(ended({ kind: "canceled", reason: "user" }, "agent-1", "claude"), { paseo });
     expect(appended).toEqual([]);
     expect(controller.refresh).not.toHaveBeenCalled();
+  });
+
+  it("checks a completed Claude turn whose account the last reading shows used up, and offers the switch", async () => {
+    onClaude();
+    cached(reading("claude-work", 100, "claude"));
+    readings(reading("claude-work", 100, "claude"), reading("claude-second", 10, "claude"));
+    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
+    expect(controller.refresh).toHaveBeenCalledWith("claude-work");
+    expect(rows(appended).map(item => item.data)).toEqual([{ rowId, state: "offered", from: "Claude Work", to: "Claude Second", toId: "claude-second", resetsAt, error: null }]);
+    expect(controller.apply).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
+  it("leaves an ordinary completed Claude turn alone without a provider request", async () => {
+    onClaude();
+    cached(reading("claude-work", 40, "claude"), reading("claude-second", 10, "claude"));
+    readings(reading("claude-work", 100, "claude"), reading("claude-second", 10, "claude"));
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
+    // Never read at all is no reason to read either.
+    cached();
+    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
+    expect(controller.list).toHaveBeenCalledTimes(2);
+    expect(controller.refresh).not.toHaveBeenCalled();
+    expect(appended).toEqual([]);
+  });
+  it("adds nothing for a completed Claude turn when the fresh reading shows room after all", async () => {
+    onClaude();
+    cached(reading("claude-work", 100, "claude"));
+    readings(reading("claude-work", 30, "claude"), reading("claude-second", 10, "claude"));
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
+    expect(controller.refresh).toHaveBeenCalledWith("claude-work");
+    expect(appended).toEqual([]);
+  });
+  it("checks a failed Claude turn as a failed Codex one, without waiting for the last reading", async () => {
+    onClaude();
+    readings(reading("claude-work", 100, "claude"), reading("claude-second", 10, "claude"));
+    const { on } = startAll(), { appended, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(ended(undefined, "agent-1", "claude"), { paseo });
+    expect(controller.list).not.toHaveBeenCalled();
+    expect(rows(appended).map(item => item.data.state)).toEqual(["offered"]);
+  });
+  it("switches automatically after a completed Claude turn without asking the agent to continue", async () => {
+    onClaude();
+    controller.registry.autoFailover.claude = true;
+    controller.apply.mockImplementation(async (agentId: string) => ({ agentId, provider: "claude", currentAccountId: "claude-second" }));
+    cached(reading("claude-work", 100, "claude"));
+    readings(reading("claude-work", 100, "claude"), reading("claude-second", 10, "claude"));
+    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
+    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
+    await vi.waitFor(() => expect(rows(appended).at(-1).data.state).toBe("auto"));
+    expect(controller.prepare).toHaveBeenCalledWith("agent-1", "claude-second");
+    expect(controller.apply).toHaveBeenCalledWith("agent-1", "claude-second");
+    expect(rows(appended).map(item => item.data.state)).toEqual(["switching", "auto"]);
+    // The turn may have ended for real, so nothing is sent; the row says where the next message runs.
+    expect(rows(appended).at(-1).data).toEqual({ rowId, state: "auto", from: "Claude Work", to: "Claude Second", toId: "claude-second", resetsAt, error: null, resumes: false });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(sent).toEqual([]);
+    expect(appended.filter(entry => entry.item.kind !== "account-failover")).toEqual([]);
   });
   it("adds nothing when the readings do not show the account used up", async () => {
     readings(reading("work", 80), reading("second", 10));

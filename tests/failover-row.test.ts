@@ -28,6 +28,15 @@ describe("the failover row in the chat", () => {
     expect(failoverText(row({ state: "failed", error: "Wait for the agent to finish its response." }), at))
       .toBe("Could not switch to Second: Wait for the agent to finish its response.");
   });
+  it("says where the next message runs when an automatic switch did not ask the agent to continue", () => {
+    expect(failoverText(row({ state: "auto", resumes: false }), at)).toBe("Switched automatically from Work to Second. Your next message runs on Second.");
+    expect(failoverText(row({ state: "auto", resumes: true }), at)).toBe("Switched automatically from Work to Second.");
+  });
+  it("still reads a row written before the optional fields existed", () => {
+    const older = { rowId: "account-failover-agent-1-turn-7", state: "auto", from: "Work", to: "Second", toId: "second", resetsAt: null, error: null };
+    const parsed = FailoverRowSchema.parse(older);
+    expect(failoverText(parsed, at)).toBe("Switched automatically from Work to Second.");
+  });
   it("offers the button only while the switch is on offer", () => {
     expect(failoverAction(row())).toEqual({ label: "Switch to Second and continue", accountId: "second" });
     for (const state of ["none", "switching", "switched", "auto", "failed"] as const) expect(failoverAction(row({ state }))).toBeNull();
@@ -38,6 +47,8 @@ describe("the failover row in the chat", () => {
       const value = row({ state, error: state === "failed" ? "busy" : null });
       expect(FailoverRowSchema.parse(JSON.parse(JSON.stringify(value)))).toEqual(value);
     }
+    const quiet = row({ state: "auto", resumes: false });
+    expect(FailoverRowSchema.parse(JSON.parse(JSON.stringify(quiet)))).toEqual(quiet);
   });
   it("rejects data from another shape rather than rendering it", () => {
     expect(FailoverRowSchema.safeParse({ state: "offered", from: "Work" }).success).toBe(false);

@@ -16,6 +16,9 @@ export const FailoverRowSchema = z.object({
   // When the account that ran out is usable again; null when the provider gave no time.
   resetsAt: z.string().nullable(),
   error: z.string().nullable(),
+  // false: the switch did not ask the agent to continue, so the user's next message runs on `to`. Rows from before
+  // this field always asked.
+  resumes: z.boolean().optional(),
 });
 export type FailoverRow = z.infer<typeof FailoverRowSchema>;
 
@@ -28,7 +31,7 @@ export function failoverText(row: FailoverRow, formatTime: (value: string) => st
     case "none": return `${used} No other account has room.`;
     case "switching": return `Switching from ${row.from} to ${to}…`;
     case "switched": return `Switched from ${row.from} to ${to}.`;
-    case "auto": return `Switched automatically from ${row.from} to ${to}.`;
+    case "auto": return `Switched automatically from ${row.from} to ${to}.${row.resumes === false ? ` Your next message runs on ${to}.` : ""}`;
     case "failed": return `Could not switch to ${to}: ${row.error ?? "the switch failed."}`;
   }
 }

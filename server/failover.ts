@@ -1,5 +1,5 @@
 import type { UsageSnapshot } from "../shared/contracts";
-import { binding, defaultBlocker, inEffect, launchOrder, type SelectionAccount } from "./selection";
+import { defaultBlocker, fullUntilReset, launchOrder, type SelectionAccount } from "./selection";
 
 export type FailoverDecision =
   | { kind: "offer"; fromId: string; toId: string; resetsAt: string | null }
@@ -16,12 +16,19 @@ export function failoverDecision(input: { currentId: string; accounts: readonly 
   const evidence = { defaultId: currentId, accounts: input.accounts, usage, model: input.model, now };
   if (defaultBlocker(evidence) !== "exhausted") return null;
   const resets = (usage.find(item => item.accountId === currentId)?.windows ?? [])
-    .filter(window => binding(window) && window.usedPercent !== null && window.usedPercent >= 100 && window.resetsAt !== null && inEffect(window, now))
+    .filter(window => fullUntilReset(window, now))
     .map(window => window.resetsAt!)
     .sort((a, b) => Date.parse(b) - Date.parse(a));
   const resetsAt = resets[0] ?? null;
   const toId = launchOrder(evidence).find(id => id !== currentId);
   return toId ? { kind: "offer", fromId: currentId, toId, resetsAt } : { kind: "none", fromId: currentId, resetsAt };
+}
+
+/** Whether the last reading of an account, read from the cache, gives reason to read it again after a turn that completed:
+ * a full account-wide window until a later reset, or the provider's "not allowed" however old. Claude reports a turn its
+ * limit stopped as completed, so this keeps every ordinary completed turn from costing a provider request. */
+export function mayBeUsedUp(cached: UsageSnapshot | undefined, now: number): boolean {
+  return !!cached && (cached.usageAllowed === false || cached.windows.some(window => fullUntilReset(window, now)));
 }
 
 const HOUR = 3_600_000, MAX_PER_HOUR = 3;
