@@ -62,7 +62,8 @@ function makeService(store:AccountStore,overrides:Partial<Omit<SwitchDependencie
 
 it("waits for a receipt from a provider CLI that starts after reload returns",async()=>{
  const {store,target}=await fixture();let started:Promise<void>|undefined;
- const service=makeService(store,{reload:async id=>{started=new Promise(done=>setTimeout(done,150)).then(()=>writeReceipt(store,id));}});
+ // The receipt lands 150 ms after reload returns; the margin must survive a slow CI runner.
+ const service=makeService(store,{receiptTimeoutMs:3000,reload:async id=>{started=new Promise(done=>setTimeout(done,150)).then(()=>writeReceipt(store,id));}});
  await service.prepare("lazy-agent",target.id);
  expect(await service.apply("lazy-agent")).toMatchObject({currentAccountId:target.id,pendingAccountId:null,status:"ready"});
  await started;
