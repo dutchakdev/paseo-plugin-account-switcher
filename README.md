@@ -14,7 +14,7 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 - **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. Changes apply only when you choose **Apply**.
 - **Keep your setup.** Profiles separate credentials while sharing provider settings, skills, and session history.
 - **Track account limits.** See used and remaining percentages, reset times, and freshness for every reported window.
-- **Use a default.** Choose the account used by new agents for each provider.
+- **Use a default.** Choose the account used by new agents for each provider. When the limits show it would fail, a new agent starts on the account with the most room instead.
 
 ## Requirements
 
@@ -78,6 +78,16 @@ Closing the dialog leaves **Continue sign-in** on the account. **Cancel sign-in*
 ### Manage accounts
 
 The **⋯** menu contains refresh, check sign-in, default, sign-in, rename, and remove actions. Account rows show identity, default status, and counts of current and pending agents.
+
+### Default for new agents
+
+A new Claude or Codex agent starts on its provider's default account. It starts on another signed-in account of the same provider only when the default would certainly fail:
+
+- a limit window of the default is at 100% and has not reset yet;
+- for Codex, the default's plan does not offer the model chosen for the agent;
+- the default needs sign-in.
+
+The replacement is the account with the most room in its tightest window; accounts without limit data come after the measured ones. If every account is used up, the agent starts on the default, as before. Choosing an account for a chat yourself always takes precedence. This uses the last limits the plugin read, so creating an agent never waits for a provider, and it changes nothing when no default is set.
 
 Before signing in again, switch agents away from that profile. To remove a managed account, clear its default and all current or pending selections first. Removal asks for confirmation. **Archived agents retain their account binding for resume**; restore and switch them before removing the account. **Current CLI** accounts cannot be removed.
 

@@ -3,6 +3,9 @@ import * as rpc from "./shared/contracts";
 import { AccountController } from "./server/controller";
 import { accountFrom } from "./server/store";
 
+// Paseo hands `agent.create`'s environment to the same agent's first `agent.session_open`, which alone knows the agent ID.
+const MODEL_ENV="PASEO_ACCOUNT_SWITCHER_MODEL";
+
 export default function contribute(server:PluginServerContext){
  const controller=new AccountController();
  server.handle(rpc.listAccounts,async(_,{paseo})=>controller.snapshot(paseo));
@@ -20,11 +23,18 @@ export default function contribute(server:PluginServerContext){
  server.handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
  server.handle(rpc.listUsage,async({visible},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.list({visible})};});
  server.handle(rpc.refreshUsage,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.refresh(accountId)};});
+ const removeCreate=server.before("agent.create",({request})=>{
+  const model=request.config.model;
+  if((request.config.provider!=="claude"&&request.config.provider!=="codex")||!model)return request;
+  return {...request,env:{...request.env,[MODEL_ENV]:model}};
+ });
  const removeHook=server.before("agent.session_open",async({request},{paseo})=>{
   await controller.ready;
-  if(request.purpose==="interactive"&&request.reason==="create"&&(request.provider==="claude"||request.provider==="codex")){await controller.ensureRuntime(paseo);await controller.switcher(paseo).bindNewAgent(request.agentId,request.provider);}
-  return request;
+  const {[MODEL_ENV]:model,...env}=request.env;
+  if(request.purpose==="interactive"&&request.reason==="create"&&(request.provider==="claude"||request.provider==="codex")){await controller.ensureRuntime(paseo);await controller.switcher(paseo).bindNewAgent(request.agentId,request.provider,model||null);}
+  // The model hint must not reach the provider CLI.
+  return {...request,env};
  });
  const removeCreated=server.on("agent.created",async({agent})=>{await controller.observeAgentRegistration(agent.id);});
- return async()=>{removeHook();removeCreated();await controller.close();};
+ return async()=>{removeCreate();removeHook();removeCreated();await controller.close();};
 }
