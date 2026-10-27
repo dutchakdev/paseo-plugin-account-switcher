@@ -92,8 +92,11 @@ export function usageReport(snapshot: UsageSnapshot | undefined): UsageReport {
   if (snapshot?.status === "needs_auth") return { status: "error", error: "Needs sign-in in Account Switcher." };
   if (!snapshot || snapshot.status === "unavailable") return { status: "error", error: "No usage data from the provider yet." };
   // A stale snapshot keeps the last good reading; the plugin's own view marks it, Paseo's has no place for that.
-  const windows = withUniqueIds(snapshot.windows.map(paseoWindow));
-  const details = snapshot.windows.flatMap((window, index): UsageDetail[] => {
+  // A window with neither a percentage nor a detail is a limit the provider names without data (Claude lists several);
+  // Paseo's own sources leave those out, and a row of empty meters would only be noise.
+  const reported = snapshot.windows.filter(window => window.usedPercent !== null || window.detail?.trim());
+  const windows = withUniqueIds(reported.map(paseoWindow));
+  const details = reported.flatMap((window, index): UsageDetail[] => {
     const text = window.detail?.trim();
     const shown = windows[index];
     return text && shown ? [{ id: shown.id, label: shown.label, value: text }] : [];
