@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="447" viewBox="0 0 980 447">
+  <defs>
+    <radialGradient id="glow" cx="0.78" cy="0.42" r="0.62">
+      <stop offset="0" stop-color="#6c55f0" stop-opacity="0.30"/>
+      <stop offset="0.55" stop-color="#3a2d86" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#131516" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f2126"/>
+      <stop offset="1" stop-color="#191a1f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a08cff"/>
+      <stop offset="1" stop-color="#7a62f2"/>
+    </linearGradient>
+    <pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1" fill="#ffffff" opacity="0.045"/>
+    </pattern>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="447" rx="14" fill="#131516"/>
+  <rect x="0" y="0" width="980" height="447" rx="14" fill="url(#dots)"/>
+  <rect x="0" y="0" width="980" height="447" rx="14" fill="url(#glow)"/>
+
+  <!-- left: words -->
+  <text x="48" y="64" fill="#626a70" font-size="11" font-weight="600" font-family="system-ui, -apple-system, sans-serif" letter-spacing="1.6">ACCOUNT SWITCHER · PASEO PLUGIN</text>
+  <text x="46" y="128" fill="#f2f3f5" font-size="38" font-weight="700" font-family="system-ui, -apple-system, sans-serif" letter-spacing="-0.6">Switch the account,</text>
+  <text x="46" y="174" fill="#f2f3f5" font-size="38" font-weight="700" font-family="system-ui, -apple-system, sans-serif" letter-spacing="-0.6">keep the <tspan fill="url(#accent)">chat</tspan>.</text>
+  <text x="48" y="218" fill="#8e939a" font-size="15" font-family="system-ui, -apple-system, sans-serif">Several Claude and ChatGPT/Codex subscriptions in one Paseo.</text>
+  <text x="48" y="240" fill="#8e939a" font-size="15" font-family="system-ui, -apple-system, sans-serif">Pick one per agent and see every account's limits.</text>
+
+  <!-- left: a chat moving to another account -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5">
+    <rect x="48" y="282" width="130" height="30" rx="8" fill="#1d1f24" stroke="#2c2f37"/>
+    <text x="113" y="301" fill="#c9ccd3" text-anchor="middle">Work · limit hit</text>
+    <path d="M184 297 h22" stroke="#4b4f58" stroke-width="1.5"/><path d="M206 297 l-5 -4 v8z" fill="#4b4f58"/>
+    <rect x="212" y="282" width="130" height="30" rx="8" fill="#211d33" stroke="#3b3266"/>
+    <text x="277" y="301" fill="#b9a6ff" text-anchor="middle">/account second</text>
+    <path d="M348 297 h22" stroke="#4b4f58" stroke-width="1.5"/><path d="M370 297 l-5 -4 v8z" fill="#4b4f58"/>
+    <rect x="376" y="282" width="146" height="30" rx="8" fill="#1d1f24" stroke="#2c2f37"/>
+    <text x="449" y="301" fill="#c9ccd3" text-anchor="middle">Second · same chat</text>
+    <text x="48" y="336" fill="#5d6268">same session, same history · limits of every account</text>
+  </g>
+
+  <!-- left bottom: version -->
+  <g font-family="system-ui, -apple-system, sans-serif">
+    <rect x="48" y="377" width="122" height="28" rx="14" fill="none" stroke="#3b3266"/>
+    <circle cx="66" cy="391" r="4" fill="#8b74ff"/>
+    <text x="78" y="395.5" fill="#b9a6ff" font-size="12.5" font-weight="600">Paseo 0.11+</text>
+    <text x="184" y="395.5" fill="#5d6268" font-size="12.5">Claude Code · Codex · macOS · Linux</text>
+  </g>
+
+  <!-- right: the account dialog -->
+  <g transform="translate(584, 46)">
+    <rect x="0" y="0" width="350" height="306" rx="16" fill="url(#card)" stroke="#2e3139"/>
+    <!-- header -->
+    <rect x="18" y="18" width="30" height="30" rx="9" fill="#2a2440"/>
+    <g fill="none" stroke="#b9a6ff" stroke-width="1.7" stroke-linecap="round">
+      <circle cx="30.5" cy="29.5" r="3.4"/>
+      <path d="M24.5 40.5 c0 -3.6 2.7 -5.8 6 -5.8 s6 2.2 6 5.8"/>
+      <circle cx="38.2" cy="28.6" r="2.6" opacity="0.7"/>
+      <path d="M38.6 34.4 c2.6 0.4 4.4 2.4 4.4 5.6" opacity="0.7"/>
+    </g>
+    <text x="58" y="34" fill="#eef0f3" font-size="14" font-weight="650" font-family="system-ui, -apple-system, sans-serif">Account</text>
+    <rect x="58" y="40" width="104" height="17" rx="5" fill="#211d33"/>
+    <text x="64" y="52.5" fill="#b9a6ff" font-size="10.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Codex · ChatGPT</text>
+    <path d="M321 27 l10 10 M331 27 l-10 10" stroke="#8e939a" stroke-width="1.6" stroke-linecap="round"/>
+
+    <g font-family="system-ui, -apple-system, sans-serif">
+      <!-- Work: current, used up -->
+      <rect x="18" y="72" width="314" height="54" rx="10" fill="#191b20" stroke="#2c2f37"/>
+      <circle cx="36" cy="92" r="6" fill="none" stroke="#8b74ff" stroke-width="1.5"/>
+      <circle cx="36" cy="92" r="3" fill="#8b74ff" opacity="0.45"/>
+      <text x="52" y="96" fill="#eef0f3" font-size="13" font-weight="600">Work</text>
+      <text x="318" y="96" fill="#8e939a" font-size="11" text-anchor="end">current</text>
+      <rect x="52" y="104" width="266" height="4" rx="2" fill="#2a2d34"/>
+      <rect x="52" y="104" width="266" height="4" rx="2" fill="#e5737a"/>
+      <text x="52" y="120" fill="#e5737a" font-size="10.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">5 hours · 0% left · resets in 1 h 40 min</text>
+
+      <!-- Second: selected -->
+      <rect x="18" y="134" width="314" height="54" rx="10" fill="#1e1a30" stroke="#6c55f0"/>
+      <circle cx="36" cy="154" r="6" fill="none" stroke="#8b74ff" stroke-width="1.5"/>
+      <circle cx="36" cy="154" r="3" fill="#8b74ff"/>
+      <text x="52" y="158" fill="#eef0f3" font-size="13" font-weight="600">Second</text>
+      <text x="318" y="158" fill="#eef0f3" font-size="11" font-weight="600" text-anchor="end">pending</text>
+      <rect x="52" y="166" width="266" height="4" rx="2" fill="#2a2d34"/>
+      <rect x="52" y="166" width="48" height="4" rx="2" fill="#7fd1a0"/>
+      <text x="52" y="182" fill="#7fd1a0" font-size="10.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">5 hours · 82% left · weekly 64% left</text>
+
+      <!-- Personal -->
+      <rect x="18" y="196" width="314" height="54" rx="10" fill="#191b20" stroke="#2c2f37"/>
+      <circle cx="36" cy="216" r="6" fill="none" stroke="#5d6268" stroke-width="1.5"/>
+      <text x="52" y="220" fill="#eef0f3" font-size="13" font-weight="600">Personal</text>
+      <rect x="52" y="228" width="266" height="4" rx="2" fill="#2a2d34"/>
+      <rect x="52" y="228" width="114" height="4" rx="2" fill="#c9ccd3"/>
+      <text x="52" y="244" fill="#8e939a" font-size="10.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">5 hours · 57% left · weekly 31% left</text>
+
+      <!-- apply -->
+      <rect x="18" y="258" width="314" height="34" rx="10" fill="url(#accent)"/>
+      <text x="175" y="279.5" fill="#ffffff" font-size="13" font-weight="650" text-anchor="middle">Apply “Second”</text>
+    </g>
+  </g>
+
+  <!-- right below: the note the chat records -->
+  <g transform="translate(584, 368)">
+    <rect x="0" y="0" width="350" height="42" rx="12" fill="#15201a" stroke="#244231"/>
+    <g fill="none" stroke="#7fd1a0" stroke-width="1.6" stroke-linecap="round">
+      <circle cx="22.5" cy="17.5" r="3.2"/>
+      <path d="M16.8 28 c0 -3.4 2.6 -5.5 5.7 -5.5 s5.7 2.1 5.7 5.5"/>
+      <circle cx="29.8" cy="16.7" r="2.4" opacity="0.7"/>
+      <path d="M30.2 22.2 c2.4 0.4 4.1 2.3 4.1 5.3" opacity="0.7"/>
+    </g>
+    <text x="46" y="25.5" fill="#7fd1a0" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Account switched from Work to Second.</text>
+  </g>
+</svg>

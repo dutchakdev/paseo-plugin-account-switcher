@@ -1,4 +1,4 @@
-<img src="assets/icon.png" width="88" align="right" alt="">
+![Account Switcher: switch the account, keep the chat. A Codex agent moves from a used-up account to another with /account, and the chat records the switch.](docs/preview.png)
 
 # Account Switcher for Paseo
 
