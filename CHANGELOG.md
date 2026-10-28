@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A banner for the README and the plugin directory, `docs/preview.png`, drawn from `docs/preview.svg`.
+
 ## 0.8.0 - 2026-10-27
 
 ### Added
