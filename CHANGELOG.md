@@ -6,6 +6,10 @@
 
 - A banner for the README and the plugin directory, `docs/preview.png`, drawn from `docs/preview.svg`.
 
+### Fixed
+
+- Applying an account failed with *The native agent reload failed* when the `paseo` on the daemon's PATH was a link to the desktop app's executable, as older Paseo Desktop installs created: the plugin passed on its own `ELECTRON_RUN_AS_NODE`, so the app ran as plain Node. The reload now runs the CLI Paseo names in `PASEO_CLI`, the desktop app's bundled CLI, and otherwise `paseo` from PATH, without Paseo's runtime variables. The plugin log records why a reload failed.
+
 ## 0.8.0 - 2026-10-27
 
 ### Added
