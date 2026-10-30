@@ -570,14 +570,38 @@ describe("native reload", () => {
     expect(env).toMatchObject({ PATH: process.env.PATH, PASEO_CLI: cli });
   });
 
+  it.each(["ENOENT", "EACCES"])("falls back to PATH when the CLI in PASEO_CLI cannot start (%s)", async code => {
+    // A daemon started from the app's terminal inherits the variable and can outlive the app it names.
+    const stale = "/Applications/Moved.app/Contents/Resources/bin/paseo";
+    vi.stubEnv("PASEO_CLI", stale);
+    mocks.execFile.mockImplementationOnce((...args: unknown[]) => {
+      (args.at(-1) as (error: Error) => void)(Object.assign(new Error(`spawn ${code}`), { code, stderr: "" }));
+    });
+    const { controller, account, lazy } = await lazyFixture("stale-agent");
+    await expect(controller.switcher(lazy).apply("stale-agent")).resolves.toMatchObject({ currentAccountId: account.id, status: "ready" });
+    expect(mocks.execFile.mock.calls.map(call => call[0])).toEqual([stale, "paseo"]);
+  });
+
+  it("runs no second CLI after the one in PASEO_CLI ran and failed", async () => {
+    const cli = "/Applications/Paseo.app/Contents/Resources/bin/paseo";
+    vi.stubEnv("PASEO_CLI", cli);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.execFile.mockImplementation((...args: unknown[]) => {
+      (args.at(-1) as (error: Error) => void)(Object.assign(new Error("Command failed"), { code: 1, signal: null, stderr: "refused" }));
+    });
+    const { controller, lazy } = await lazyFixture("refused-agent");
+    await expect(controller.switcher(lazy).apply("refused-agent")).rejects.toThrow(/^The native agent reload failed\./);
+    expect(new Set(mocks.execFile.mock.calls.map(call => call[0]))).toEqual(new Set([cli]));
+  });
+
   it("keeps the cause of a failed reload in the plugin log and out of the chat", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.execFile.mockImplementationOnce((...args: unknown[]) => {
-      const stderr = "node:internal/modules/cjs/loader:1575\n  throw err;\n  ^\n\nError: Cannot find module '/agent'\n";
+      const stderr = "node:internal/modules/cjs/loader:1575\n  throw err;\n  ^\n\n\u001b[31mError: Cannot find module '/agent'\u001b[39m\n";
       (args.at(-1) as (error: Error) => void)(Object.assign(new Error("Command failed"), { code: 1, signal: null, stderr }));
     });
     const { controller, lazy } = await lazyFixture("broken-agent");
     await expect(controller.switcher(lazy).apply("broken-agent")).rejects.toThrow(/^The native agent reload failed\. Check the agent status and try again\.$/);
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/broken-agent with paseo failed \(code 1\): .*Cannot find module '\/agent'/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/broken-agent with paseo failed \(code 1\): .* Error: Cannot find module '\/agent'$/));
   });
 });

@@ -1,6 +1,6 @@
 # Verification
 
-Last checked: **2026-10-27**. These results describe observed checks, not a guarantee
+Last checked: **2026-10-30**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
 
 ## Automated checks
@@ -54,6 +54,24 @@ texts. Rebuilding from a different working directory produced identical output.
 The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
+
+## The CLI behind a native reload — 2026-10-30
+
+On macOS, with Paseo Desktop's bundled CLI and an isolated daemon, both **0.14.0-beta.1**,
+`AccountController.switcher().apply()` ran with the real `execFile` against a mock agent. Login,
+launchers and usage were stubbed, and `commands()` wrote the receipt, so this checks which CLI runs
+and what it reports, not a real switch.
+
+- The code before #44 refused with a link from PATH to the app's executable and
+  `ELECTRON_RUN_AS_NODE=1`. The same command by hand printed `Cannot find module '…/agent'`.
+- Applied now: that link with `PASEO_CLI` naming the bundled CLI; that link without `PASEO_CLI`,
+  through the app's own CLI handling; `paseo` on PATH; `PASEO_CLI` naming a missing file or one that
+  cannot run, with `paseo` on PATH.
+- Refused, with the cause in the log: an agent the daemon does not know (`AGENT_NOT_FOUND`), no CLI
+  anywhere (`code ENOENT`), the daemon down (`DAEMON_UNREACHABLE`).
+
+A real account switch with Claude or Codex under a desktop-managed daemon remains unchecked: the
+daemon on this machine is not desktop-managed.
 
 ## Development SDK 0.11.4, Paseo usage and failover — 2026-10-27
 
