@@ -529,22 +529,55 @@ describe("live integration reconciliation", () => {
 });
 
 describe("native reload", () => {
-  it("starts a lazily launched provider CLI so the switch can confirm its receipt", async () => {
+  // A Paseo terminal names the app's CLI in PASEO_CLI; each test here chooses the CLI itself.
+  beforeEach(() => { vi.stubEnv("PASEO_CLI", undefined); });
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  async function lazyFixture(agentId: string) {
     const home = await newRoot(), controller = await start(join(home, "account-switcher"));
     await writeFile(join(home, "config.json"), JSON.stringify({ daemon: { listen: "0.0.0.0:6767" } }));
     const account = await controller.store.add("codex", "Managed"); await mkdir(account.home, { recursive: true });
     await controller.store.change(r => { r.integration.enabled = true; });
-    await controller.store.prepare("lazy-agent", "codex", account.id);
+    await controller.store.prepare(agentId, "codex", account.id);
     // Paseo 0.11 returns from reload before the CLI exists; only first use spawns the launcher.
     const commands = vi.fn(async () => {
       const binding = (await controller.store.read()).bindings[0];
       await mkdir(join(controller.store.root, "receipts"), { recursive: true });
-      await writeFile(join(controller.store.root, "receipts", "lazy-agent.json"), JSON.stringify({ accountId: binding.launchAccountId, launchToken: binding.launchToken }));
+      await writeFile(join(controller.store.root, "receipts", `${agentId}.json`), JSON.stringify({ accountId: binding.launchAccountId, launchToken: binding.launchToken }));
       return { commands: [] };
     });
     const lazy = { agents: { ref: () => ({ refresh: async () => ({ agent: { provider: "codex", status: "idle", activeTurn: null, pendingPermissions: [], archivedAt: null } }), commands }) } } as unknown as PaseoApi;
+    return { controller, account, commands, lazy };
+  }
+
+  it("starts a lazily launched provider CLI so the switch can confirm its receipt", async () => {
+    const { controller, account, commands, lazy } = await lazyFixture("lazy-agent");
     await expect(controller.switcher(lazy).apply("lazy-agent")).resolves.toMatchObject({ currentAccountId: account.id, status: "ready" });
     expect(mocks.execFile).toHaveBeenCalledWith("paseo", ["agent", "reload", "lazy-agent", "--json", "--host", "127.0.0.1:6767"], expect.anything(), expect.any(Function));
     expect(commands).toHaveBeenCalledTimes(1);
+  });
+
+  it("reloads with the daemon's own CLI and without the runtime switches of the plugin's process", async () => {
+    // An older desktop install linked `paseo` to the app executable, which ELECTRON_RUN_AS_NODE turns into plain Node.
+    const cli = "/Applications/Paseo.app/Contents/Resources/bin/paseo";
+    vi.stubEnv("PASEO_CLI", cli); vi.stubEnv("ELECTRON_RUN_AS_NODE", "1"); vi.stubEnv("PASEO_NODE_ENV", "production");
+    const { controller, account, lazy } = await lazyFixture("cli-agent");
+    await expect(controller.switcher(lazy).apply("cli-agent")).resolves.toMatchObject({ currentAccountId: account.id, status: "ready" });
+    expect(mocks.execFile).toHaveBeenCalledWith(cli, ["agent", "reload", "cli-agent", "--json", "--host", "127.0.0.1:6767"], expect.anything(), expect.any(Function));
+    const { env } = mocks.execFile.mock.calls.find(call => call[0] === cli)![2] as { env: NodeJS.ProcessEnv };
+    expect(env).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
+    expect(env).not.toHaveProperty("PASEO_NODE_ENV");
+    expect(env).toMatchObject({ PATH: process.env.PATH, PASEO_CLI: cli });
+  });
+
+  it("keeps the cause of a failed reload in the plugin log and out of the chat", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.execFile.mockImplementationOnce((...args: unknown[]) => {
+      const stderr = "node:internal/modules/cjs/loader:1575\n  throw err;\n  ^\n\nError: Cannot find module '/agent'\n";
+      (args.at(-1) as (error: Error) => void)(Object.assign(new Error("Command failed"), { code: 1, signal: null, stderr }));
+    });
+    const { controller, lazy } = await lazyFixture("broken-agent");
+    await expect(controller.switcher(lazy).apply("broken-agent")).rejects.toThrow(/^The native agent reload failed\. Check the agent status and try again\.$/);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/broken-agent with paseo failed \(code 1\): .*Cannot find module '\/agent'/));
   });
 });
