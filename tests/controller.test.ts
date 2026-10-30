@@ -559,7 +559,7 @@ describe("native reload", () => {
 
   it("reloads with the daemon's own CLI and without the runtime switches of the plugin's process", async () => {
     // An older desktop install linked `paseo` to the app executable, which ELECTRON_RUN_AS_NODE turns into plain Node.
-    const cli = "/Applications/Paseo.app/Contents/Resources/bin/paseo";
+    const cli = join(await newRoot(), "paseo"); await writeFile(cli, "", { mode: 0o755 });
     vi.stubEnv("PASEO_CLI", cli); vi.stubEnv("ELECTRON_RUN_AS_NODE", "1"); vi.stubEnv("PASEO_NODE_ENV", "production");
     const { controller, account, lazy } = await lazyFixture("cli-agent");
     await expect(controller.switcher(lazy).apply("cli-agent")).resolves.toMatchObject({ currentAccountId: account.id, status: "ready" });
@@ -570,14 +570,27 @@ describe("native reload", () => {
     expect(env).toMatchObject({ PATH: process.env.PATH, PASEO_CLI: cli });
   });
 
+  it.each([
+    ["is missing", async () => {}],
+    ["cannot run", async (path: string) => { await writeFile(path, "", { mode: 0o644 }); }],
+  ])("falls back to PATH when the CLI in PASEO_CLI %s", async (_, prepare) => {
+    // A daemon started from the app's terminal inherits the variable and can outlive the app it names.
+    const stale = join(await newRoot(), "paseo"); await prepare(stale);
+    vi.stubEnv("PASEO_CLI", stale);
+    const { controller, account, lazy } = await lazyFixture("stale-agent");
+    await expect(controller.switcher(lazy).apply("stale-agent")).resolves.toMatchObject({ currentAccountId: account.id, status: "ready" });
+    expect(mocks.execFile).toHaveBeenCalledWith("paseo", ["agent", "reload", "stale-agent", "--json", "--host", "127.0.0.1:6767"], expect.anything(), expect.any(Function));
+    expect(mocks.execFile).not.toHaveBeenCalledWith(stale, expect.anything(), expect.anything(), expect.anything());
+  });
+
   it("keeps the cause of a failed reload in the plugin log and out of the chat", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.execFile.mockImplementationOnce((...args: unknown[]) => {
-      const stderr = "node:internal/modules/cjs/loader:1575\n  throw err;\n  ^\n\nError: Cannot find module '/agent'\n";
+      const stderr = "node:internal/modules/cjs/loader:1575\n  throw err;\n  ^\n\n\u001b[31mError: Cannot find module '/agent'\u001b[39m\n";
       (args.at(-1) as (error: Error) => void)(Object.assign(new Error("Command failed"), { code: 1, signal: null, stderr }));
     });
     const { controller, lazy } = await lazyFixture("broken-agent");
     await expect(controller.switcher(lazy).apply("broken-agent")).rejects.toThrow(/^The native agent reload failed\. Check the agent status and try again\.$/);
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/broken-agent with paseo failed \(code 1\): .*Cannot find module '\/agent'/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/broken-agent with paseo failed \(code 1\): .* Error: Cannot find module '\/agent'$/));
   });
 });

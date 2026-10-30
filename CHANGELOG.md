@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- Applying an account failed with *The native agent reload failed* when the `paseo` on the daemon's PATH was a link to the desktop app's executable, as older Paseo Desktop installs created: the plugin passed on its own `ELECTRON_RUN_AS_NODE`, so the app ran as plain Node. The reload now runs the CLI Paseo names in `PASEO_CLI`, the desktop app's bundled CLI, and otherwise `paseo` from PATH, without Paseo's runtime variables. The plugin log records why a reload failed.
+- Applying an account failed with *The native agent reload failed* when the `paseo` on the daemon's PATH was a link to the desktop app's executable, as older Paseo Desktop installs created: the plugin passed on its own `ELECTRON_RUN_AS_NODE`, so the app ran as plain Node. The reload now runs the CLI Paseo names in `PASEO_CLI`, the desktop app's bundled CLI, or `paseo` from PATH when that is unset or no longer runs, without Paseo's runtime variables. The plugin log records why a reload failed.
 
 ## 0.8.0 - 2026-10-27
 

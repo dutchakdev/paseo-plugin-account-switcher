@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 import { homedir } from "node:os";
 import { join, dirname, resolve } from "node:path";
-import { lstat, readFile, realpath, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "./paseo-api";
 import { AccountSchema, missingCli, type LoginSession, type Provider } from "../shared/contracts";
@@ -20,8 +21,9 @@ const execFileAsync=promisify(execFile);
 // command. Inherited, ELECTRON_RUN_AS_NODE makes an Electron executable, such as a `paseo` link to the desktop app's
 // executable left by an older install, run as plain Node, which then fails to load "agent" as a script.
 const RUNTIME_ENV=["PASEO_NODE_ENV","PASEO_DESKTOP_MANAGED","PASEO_SUPERVISED","ELECTRON_RUN_AS_NODE","ELECTRON_NO_ATTACH_CONSOLE","ESBUILD_BINARY_PATH"];
-// The desktop app names its bundled CLI, the daemon's own version, in PASEO_CLI; a standalone daemon finds `paseo` on PATH.
-function paseoCli(){const env={...process.env};for(const key of RUNTIME_ENV)delete env[key];return{command:process.env.PASEO_CLI?.trim()||"paseo",env};}
+// PASEO_CLI names the desktop app's bundled CLI, for the daemon the app starts and for one started from the app's terminal,
+// which inherits it. That path can outlive the app, so one that no longer runs falls back to `paseo` on PATH, as on a standalone daemon.
+async function paseoCli(){const env={...process.env};for(const key of RUNTIME_ENV)delete env[key];const named=process.env.PASEO_CLI?.trim();return{command:named&&await access(named,constants.X_OK).then(()=>true,()=>false)?named:"paseo",env};}
 // A revoked sign-in fails every renewal; this bounds how often it starts the CLI.
 const RENEWAL_INTERVAL=600000;
 // Agent statuses that show a launch got under way, for the receipt check: the Accounts list waits for a session that is
@@ -343,12 +345,12 @@ export class AccountController {
    const listen=config.daemon?.listen;
    if(typeof listen!=="string"||!listen)throw new SwitchRefusal("Could not identify the daemon for reload.");
    const host=listen.replace(/^0\.0\.0\.0:/,"127.0.0.1:");
-   const cli=paseoCli();
+   const cli=await paseoCli();
    try{await execFileAsync(cli.command,["agent","reload",id,"--json","--host",host],{timeout:120_000,maxBuffer:1024*1024,env:cli.env});}
    catch(error){
     // The chat gets the refusal; the cause, which can name local paths, goes only to the plugin log.
     const {code,signal,stderr}=error as {code?:unknown;signal?:unknown;stderr?:unknown};
-    console.error(`Native reload of agent ${id} with ${cli.command} failed (${signal?`signal ${signal}`:`code ${code}`}): ${String(stderr??"").replace(/\s+/g," ").trim().slice(0,500)||"no output"}`);
+    console.error(`Native reload of agent ${id} with ${cli.command} failed (${signal?`signal ${signal}`:`code ${code}`}): ${stripVTControlCharacters(String(stderr??"")).replace(/\s+/g," ").trim().slice(0,500)||"no output"}`);
     throw new SwitchRefusal("The native agent reload failed. Check the agent status and try again.");
    }
    // Paseo 0.11 reloads into an idle session and spawns the CLI on first use; listing
