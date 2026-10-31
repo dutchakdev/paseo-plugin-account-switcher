@@ -3,6 +3,7 @@ import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises
 import type { PathLike } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import type { PaseoApi } from "@getpaseo/client";
 
 const mocks = vi.hoisted(() => ({
@@ -286,13 +287,16 @@ function completeAgentPage(ids: string[], nextCursor: string | null = null) {
   return { entries: ids.map(id => ({ agent: { id, archivedAt: id.startsWith("archived") ? "2026-09-16T00:00:00Z" : null } })), pageInfo: { hasMore: nextCursor !== null, nextCursor, prevCursor: null } };
 }
 
+// Paseo answers null for an agent that is gone.
+const goneAgents = { ref: () => ({ refresh: async () => null }) };
+
 describe("deleted agent reconciliation", () => {
   it("protects the default before registration, then releases it after observed registration and deletion", async () => {
     const { controller, account } = await fixture();
     await controller.setDefault("codex", account.id);
     await controller.store.change(r => { r.integration.enabled = true; });
     await controller.switcher(paseo).bindNewAgent("creating-agent", "codex");
-    const host = { agents: { ...paseo.agents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
+    const host = { agents: { ...paseo.agents, ...goneAgents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
     await controller.snapshot(host);
     expect((await controller.store.read()).bindings[0]).toMatchObject({ agentId: "creating-agent", registrationObserved: false, launchAccountId: account.id });
     await expect(controller.remove(account.id, host)).rejects.toThrow(/used/);
@@ -302,7 +306,7 @@ describe("deleted agent reconciliation", () => {
   });
 
   describe("an agent that never appeared", () => {
-    const nobody = { agents: { ...paseo.agents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
+    const nobody = { agents: { ...paseo.agents, ...goneAgents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
     afterEach(() => { vi.useRealTimers(); });
     // Past the wait for a creation that Paseo never reports as failed.
     const tenMinutesLater = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + 10 * 60_000 + 1); };
@@ -363,6 +367,52 @@ describe("deleted agent reconciliation", () => {
       expect((await controller.store.read()).bindings[0]).toMatchObject({ agentId: "failed-agent", registrationObserved: true });
     });
 
+    // What the launcher writes as the CLI starts.
+    async function launched(controller: AccountController, content: string) {
+      await mkdir(join(controller.store.root, "receipts"), { recursive: true });
+      await writeFile(join(controller.store.root, "receipts", "failed-agent.json"), content);
+    }
+    const receiptOf = (pid: number) => JSON.stringify({ accountId: "any", launchToken: "any", pid, at: "2026-10-31T00:00:00Z" });
+
+    it("holds its account past the wait while the CLI of that launch still runs", async () => {
+      const { controller, account } = await failedStart();
+      await launched(controller, receiptOf(process.pid));
+      tenMinutesLater();
+      await expect(controller.remove(account.id, nobody)).rejects.toThrow(/used by an agent/);
+      expect((await controller.store.read()).bindings.map(b => b.agentId)).toEqual(["failed-agent"]);
+    });
+
+    it("releases its account once that CLI has exited", async () => {
+      const { controller, account } = await failedStart();
+      await launched(controller, receiptOf(spawnSync(process.execPath, ["-e", ""]).pid));
+      tenMinutesLater();
+      await controller.remove(account.id, nobody);
+      expect((await controller.store.read()).bindings).toEqual([]);
+    });
+
+    it.each([["cannot be read", "{"], ["names no process", JSON.stringify({ accountId: "any", launchToken: "any" })]])("holds its account when the launch receipt %s", async (_, content) => {
+      const { controller, account } = await failedStart();
+      await launched(controller, content);
+      tenMinutesLater();
+      await expect(controller.remove(account.id, nobody)).rejects.toThrow(/used by an agent/);
+    });
+
+    it("keeps the binding of an agent that the list leaves out and Paseo still knows", async () => {
+      const { controller, account } = await failedStart();
+      tenMinutesLater();
+      const background = { agents: { ...paseo.agents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
+      await expect(controller.remove(account.id, background)).rejects.toThrow(/used by an agent/);
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ agentId: "failed-agent", registrationObserved: true });
+    });
+
+    it("keeps the binding when the agent cannot be looked up", async () => {
+      const { controller, account } = await failedStart();
+      tenMinutesLater();
+      const unknown = { agents: { ...paseo.agents, list: async () => completeAgentPage([]), ref: () => ({ refresh: async () => { throw new Error("offline"); } }) } } as unknown as PaseoApi;
+      await expect(controller.remove(account.id, unknown)).rejects.toThrow(/used by an agent/);
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ agentId: "failed-agent", registrationObserved: false });
+    });
+
     it("keeps the binding when the agent list is incomplete", async () => {
       const { controller, account } = await failedStart();
       tenMinutesLater();
@@ -372,13 +422,22 @@ describe("deleted agent reconciliation", () => {
     });
   });
 
+  it("keeps the binding of a registered agent that the list leaves out", async () => {
+    const { controller, account } = await fixture();
+    await controller.store.prepare("background-agent", "codex", account.id);
+    await controller.store.change(r => { r.bindings[0].currentAccountId = account.id; r.bindings[0].registrationObserved = true; });
+    const background = { agents: { ...paseo.agents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
+    await controller.snapshot(background);
+    expect((await controller.store.read()).bindings.map(b => b.agentId)).toEqual(["background-agent"]);
+  });
+
   it("releases deleted-agent bindings for login while retaining archived agents across every page", async () => {
     const { controller, account } = await fixture();
     await controller.store.prepare("deleted-agent", "codex", account.id);
     await controller.store.change(r => { r.bindings[0].currentAccountId = account.id; r.bindings[0].launchAccountId = account.id; });
     await controller.store.prepare("archived-agent", "codex", "system-codex");
     const list = vi.fn().mockResolvedValueOnce(completeAgentPage(["active-agent"], "second-page")).mockResolvedValueOnce(completeAgentPage(["archived-agent"]));
-    const host = { agents: { ...paseo.agents, list } } as unknown as PaseoApi;
+    const host = { agents: { ...paseo.agents, ...goneAgents, list } } as unknown as PaseoApi;
     await expect(controller.login(host, account.id)).resolves.toMatchObject({ terminalId: "login-terminal" });
     expect((await controller.store.read()).bindings.map(b => b.agentId)).toEqual(["archived-agent"]);
     expect(list).toHaveBeenNthCalledWith(1, { filter: { includeArchived: true }, page: { limit: 200 } });
@@ -388,7 +447,7 @@ describe("deleted agent reconciliation", () => {
   it("lets the removal RPC path clear a deleted binding but protects an archived binding", async () => {
     const { controller, account } = await fixture();
     await controller.store.prepare("deleted-agent", "codex", account.id);
-    const host = { agents: { ...paseo.agents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
+    const host = { agents: { ...paseo.agents, ...goneAgents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
     await controller.remove(account.id, host);
     expect((await controller.store.read()).accounts.some(a => a.id === account.id)).toBe(false);
     const archivedAccount = await controller.store.add("codex", "Archived owner");
@@ -413,7 +472,7 @@ describe("deleted agent reconciliation", () => {
     let finish!: (value: ReturnType<typeof completeAgentPage>) => void, started!: () => void;
     const entered = new Promise<void>(resolve => { started = resolve; });
     const list = vi.fn(() => { started(); return new Promise<ReturnType<typeof completeAgentPage>>(resolve => { finish = resolve; }); });
-    const snapshot = controller.snapshot({ agents: { ...paseo.agents, list } } as unknown as PaseoApi);
+    const snapshot = controller.snapshot({ agents: { ...paseo.agents, ...goneAgents, list } } as unknown as PaseoApi);
     await entered; await controller.store.prepare("new-agent", "codex", account.id); finish(completeAgentPage([])); await snapshot;
     expect((await controller.store.read()).bindings.map(b => b.agentId)).toEqual(["new-agent"]);
   });

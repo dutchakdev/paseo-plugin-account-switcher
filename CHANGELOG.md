@@ -8,7 +8,8 @@
 
 ### Fixed
 
-- An agent whose creation failed, for example because its CLI did not start, held its account for good: the account could not be removed or signed in again, even after a plugin reload. The account is now released 10 minutes after the failed start. An account held this way by an earlier release is released 10 minutes after this version first checks it.
+- An agent whose creation failed, for example because its CLI did not start, held its account for good: the account could not be removed or signed in again, even after a plugin reload. The next check now releases the account once 10 minutes have passed, no CLI of that launch still runs, and Paseo answers that the agent is gone. For an account held this way by an earlier release, the 10 minutes start when this version first checks it.
+- An agent in a background workspace lost its account the first time Accounts refreshed, because Paseo's agent list leaves such agents out: the account could then be removed while in use, and the agent's next CLI start ran on the system login. A binding now goes only when Paseo answers that the agent itself is gone.
 
 ## 0.8.1 - 2026-10-30
 
