@@ -11,6 +11,8 @@ describe("account notes in the chat timeline", () => {
     expect(noteText({ kind: "started", from: "Work", to: "Second", reason: "model" })).toBe("Starting on Second: the default Work's plan does not offer this agent's model.");
     expect(noteText({ kind: "started", from: "Work", to: "Second", reason: "sign-in" })).toBe("Starting on Second: the default Work needs sign-in.");
     expect(noteText({ kind: "started", from: "Work", to: "Second", reason: "unverified" })).toBe("Starting on Second: the default Work could not be checked.");
+    expect(noteText({ kind: "started", from: "Work", to: "Second", reason: "requested" })).toBe("Starting on Second: named when the agent was created, instead of the default Work.");
+    expect(noteText({ kind: "started", from: null, to: "Second", reason: "requested" })).toBe("Starting on Second.");
   });
   it("rejects data from another shape rather than rendering it", () => {
     expect(AccountNoteSchema.safeParse({ kind: "switched", to: "Second" }).success).toBe(false);

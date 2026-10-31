@@ -71,7 +71,7 @@ describe("the agent's model on its way to account selection", () => {
     const created = await before.get("agent.create")!({ request: { config: { provider: "codex", cwd: "/work", model: "gpt-6.1-sol" }, env: { KEEP: "1" } } }, { paseo: {} });
     expect(created.env).toMatchObject({ KEEP: "1" });
     const opened = await before.get("agent.session_open")!({ request: opening(created.env) }, { paseo: {} });
-    expect(controller.bindNewAgent).toHaveBeenCalledWith("agent-1", "codex", "gpt-6.1-sol");
+    expect(controller.bindNewAgent).toHaveBeenCalledWith("agent-1", "codex", "gpt-6.1-sol", null);
     expect(opened.env).toEqual({ KEEP: "1", CODEX_HOME: "/profiles/work" });
     expect(opened.env).not.toHaveProperty("PASEO_ACCOUNT_SWITCHER_MODEL");
   });
@@ -89,6 +89,37 @@ describe("the agent's model on its way to account selection", () => {
     const opened = await before.get("agent.session_open")!({ request: opening(created.env, "resume") }, { paseo: {} });
     expect(controller.bindNewAgent).not.toHaveBeenCalled();
     expect(opened.env).toEqual({ CODEX_HOME: "/profiles/work" });
+  });
+});
+
+describe("an account named when the agent is created", () => {
+  afterEach(() => { controller.bindNewAgent.mockReset(); controller.bindNewAgent.mockImplementation(async () => undefined); });
+  it("hands the named account to the new agent's binding, and not to the CLI environment", async () => {
+    const before = start();
+    const created = await before.get("agent.create")!({ request: { config: { provider: "codex", cwd: "/work" }, env: { KEEP: "1", PASEO_ACCOUNT_SWITCHER_ACCOUNT: " Second " } } }, { paseo: {} });
+    const opened = await before.get("agent.session_open")!({ request: opening(created.env) }, { paseo: {} });
+    expect(controller.bindNewAgent).toHaveBeenCalledWith("agent-1", "codex", null, "Second");
+    expect(opened.env).not.toHaveProperty("PASEO_ACCOUNT_SWITCHER_ACCOUNT");
+    expect(opened.env).toMatchObject({ KEEP: "1" });
+  });
+  it("treats an empty value as no account named", async () => {
+    await start().get("agent.session_open")!({ request: opening({ PASEO_ACCOUNT_SWITCHER_ACCOUNT: "  " }) }, { paseo: {} });
+    expect(controller.bindNewAgent).toHaveBeenCalledWith("agent-1", "codex", null, null);
+  });
+  it("strips the name from later sessions of the agent without binding them", async () => {
+    const opened = await start().get("agent.session_open")!({ request: opening({ PASEO_ACCOUNT_SWITCHER_ACCOUNT: "Second" }, "resume") }, { paseo: {} });
+    expect(controller.bindNewAgent).not.toHaveBeenCalled();
+    expect(opened.env).not.toHaveProperty("PASEO_ACCOUNT_SWITCHER_ACCOUNT");
+  });
+  it("refuses to create an agent of a provider whose accounts the plugin does not manage", async () => {
+    const request = { ...opening({ PASEO_ACCOUNT_SWITCHER_ACCOUNT: "Second" }), provider: "opencode" };
+    await expect(start().get("agent.session_open")!({ request }, { paseo: {} })).rejects.toThrow(SwitchRefusal);
+    await expect(start().get("agent.session_open")!({ request }, { paseo: {} })).rejects.toThrow("Account Switcher manages only Claude Code and Codex accounts, so the opencode agent cannot start on Second.");
+    expect(controller.bindNewAgent).not.toHaveBeenCalled();
+  });
+  it("lets a refused binding fail the creation with its reason", async () => {
+    controller.bindNewAgent.mockRejectedValueOnce(new SwitchRefusal("No Codex account is named Nobody."));
+    await expect(start().get("agent.session_open")!({ request: opening({ PASEO_ACCOUNT_SWITCHER_ACCOUNT: "Nobody" }) }, { paseo: {} })).rejects.toThrow("No Codex account is named Nobody.");
   });
 });
 
@@ -149,6 +180,14 @@ describe("account notes in the timeline", () => {
     await on.get("agent.created")!({ agent: { id: "agent-1" } }, { paseo });
     await vi.waitFor(() => expect(appended).toHaveLength(1));
     expect(appended[0]).toMatchObject({ agentId: "agent-1", item: { type: "plugin", kind: "account-note", version: 1, data: { kind: "started", from: "Work", to: "Second", reason: "exhausted" } } });
+  });
+  it("records that a new agent starts on the account named at its creation", async () => {
+    const { before, on } = startAll(), { appended, paseo } = paseoRecorder();
+    controller.bindNewAgent.mockResolvedValueOnce({ accountId: "second", defaultId: "work", reason: "requested" });
+    await before.get("agent.session_open")!({ request: opening({ PASEO_ACCOUNT_SWITCHER_ACCOUNT: "Second" }) }, { paseo });
+    await on.get("agent.created")!({ agent: { id: "agent-1" } }, { paseo });
+    await vi.waitFor(() => expect(appended).toHaveLength(1));
+    expect(appended[0]).toMatchObject({ item: { kind: "account-note", data: { kind: "started", from: "Work", to: "Second", reason: "requested" } } });
   });
   it("adds no note when the agent starts on its default", async () => {
     const { before, on } = startAll(), { appended, paseo } = paseoRecorder();

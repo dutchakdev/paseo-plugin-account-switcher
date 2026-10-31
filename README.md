@@ -100,6 +100,16 @@ Limits come from the plugin's last reading, so creating an agent does not wait f
 
 Before signing in again, switch agents away from that profile. To remove a managed account, clear its default and all current or pending selections first. Removal asks for confirmation. **Archived agents retain their account binding for resume**; restore and switch them before removing the account. **Current CLI** accounts cannot be removed.
 
+### Start an agent on a chosen account
+
+A tool that creates agents can name the account a new Claude or Codex agent starts on: set `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment to the account's name, as shown in Accounts, or its ID. With the Paseo CLI:
+
+```sh
+paseo run --provider codex --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work "Review the open pull requests"
+```
+
+The named account is binding, like a default under **Always use the default**: the agent starts there or is not created, and the error says why. Limits do not move it to another account. A name must belong to exactly one account of the agent's provider; use the ID when two accounts share a name. Creation is refused when no such account exists, its sign-in is still in progress, the official sign-in check does not confirm it, account switching is off for the provider, or the agent's provider is not Claude or Codex. The variable reaches neither the provider CLI nor later sessions of the agent, and the chat records the start when the account is not the default. Afterwards the agent behaves like any other: switching, and switching when a limit runs out, follow your settings.
+
 ## Switch an existing chat
 
 1. Select the account chip beside the message field to open **Account** over the current chat.

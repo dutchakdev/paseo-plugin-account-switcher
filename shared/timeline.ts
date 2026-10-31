@@ -9,7 +9,7 @@ export const AccountNoteSchema = z.object({
   from: z.string().nullable(),
   to: z.string(),
   // Why a new agent did not start on the default; null for a switch the user applied.
-  reason: z.enum(["exhausted", "model", "sign-in", "unverified"]).nullable(),
+  reason: z.enum(["exhausted", "model", "sign-in", "unverified", "requested"]).nullable(),
 });
 export type AccountNote = z.infer<typeof AccountNoteSchema>;
 
@@ -18,6 +18,7 @@ const why: Record<NonNullable<AccountNote["reason"]>, (from: string) => string> 
   model: (from) => `the default ${from}'s plan does not offer this agent's model`,
   "sign-in": (from) => `the default ${from} needs sign-in`,
   unverified: (from) => `the default ${from} could not be checked`,
+  requested: (from) => `named when the agent was created, instead of the default ${from}`,
 };
 
 export function noteText(note: AccountNote): string {
