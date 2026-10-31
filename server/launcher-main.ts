@@ -40,6 +40,12 @@ async function main(): Promise<void> {
       if (!(await lstat(account.home)).isDirectory() || await realpath(account.home) !== join(await realpath(root), "accounts", account.id, provider)) throw new Error();
     } catch { throw new LauncherError("Assigned account profile is missing or redirected; launch refused. Restore the profile or select another account."); }
     try { await prepareProfile({ provider, home: account.home, sourceHome: registry.sourceHomes[provider], sourceEnvironment: registry.sourceEnvironment[provider] }); } catch { throw new LauncherError("Account profile preparation failed; inspect shared provider configuration."); }
+    // The plugin can release a new agent's binding while this waited, and then nothing keeps the profile from being removed or signed in again.
+    if (!login) {
+      let current;
+      try { current = await readRegistry(root); } catch { throw new LauncherError("Account registry is missing or corrupt; launch refused."); }
+      if (!current.bindings.some(candidate => candidate.agentId === agentId)) throw new LauncherError("The account reservation was released while this agent started; launch refused.");
+    }
     env = buildAccountEnv(provider, account.home, env);
   }
   if (login) args = provider === "claude" ? ["auth", "login", "--claudeai"] : args[2] === "--browser" ? ["login"] : ["login", "--device-auth"];

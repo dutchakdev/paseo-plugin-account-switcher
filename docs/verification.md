@@ -55,6 +55,19 @@ The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
 
+## An agent whose creation fails — 2026-10-31
+
+With an isolated Paseo **0.14.0** daemon and a stand-in `codex` made to exit 1 as `app-server`, after one working start had cached the model list:
+
+- A named account, and separately a default: the creation failed, no agent existed, and the binding stayed. Removing the account was refused at once and succeeded once the binding's time was 11 minutes old.
+- A binding without a time, as earlier releases wrote it: the first look gave it a time and still refused; removal succeeded once that time was 11 minutes old.
+- A working start with the same aged time: the binding stayed, confirmed by its receipt, and the account stayed protected.
+- A creation hung with its CLI alive, with the same aged time: removal was refused. Once that CLI was killed, removal succeeded.
+- An agent in a background workspace, which `paseo ls` and the plugin's list leave out: the binding stayed and was confirmed, and removal was refused. On the code before this fix, the first `accounts.list` dropped the binding and removal succeeded.
+- A receipt whose PID belonged to a live process started after the receipt was written, with the same aged time: removal succeeded.
+
+The time was moved by editing the registry, not by waiting. Signing in again after the wait, and a launcher finding its binding gone after preparing the profile, are covered by automated tests only.
+
 ## Naming an account at creation — 2026-10-31
 
 On macOS, with an isolated Paseo **0.14.0** daemon and a stand-in `codex` that records its arguments

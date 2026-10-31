@@ -14,6 +14,7 @@ import { SwitchRefusal, SwitchService } from "./switching";
 import { createUsageService, readCredentialVersion, type AccountReadOptions, type QuotaAccount } from "./usage";
 import { renewExpiredClaudeToken } from "./usage/claude";
 import { LoginSessions, type LoginDependencies } from "./login";
+import { receiptProcessRuns } from "./process-identity";
 
 const execFileAsync=promisify(execFile);
 // Paseo sets these for its own Node processes, this plugin's included, and removes them before it starts an outside
@@ -25,6 +26,9 @@ const RUNTIME_ENV=["PASEO_NODE_ENV","PASEO_DESKTOP_MANAGED","PASEO_SUPERVISED","
 function paseoCli(){const env={...process.env};for(const key of RUNTIME_ENV)delete env[key];return{command:process.env.PASEO_CLI?.trim()||"paseo",env};}
 // A revoked sign-in fails every renewal; this bounds how often it starts the CLI.
 const RENEWAL_INTERVAL=600000;
+// A new agent's binding is written before its CLI starts, and Paseo reports no failed creation. This covers the time until the
+// CLI reads the binding, where each plugin hook gets 30 seconds; from then on the launcher's receipt says whether that CLI still runs.
+const CREATION_WAIT=600000;
 // Agent statuses that show a launch got under way, for the receipt check: the Accounts list waits for a session that is
 // up. Failover also takes "error", which Paseo sets when a turn fails, before the plugin's turn_ended hook runs: the
 // launcher wrote the receipt when it started the CLI, so the receipt still names the account the agent started on.
@@ -113,15 +117,35 @@ export class AccountController {
    }
   }catch{return;}
   if(!complete)return;
+  // The list leaves agents out, those in background workspaces among them, so only Paseo's answer for the agent itself proves it is gone.
+  const now=Date.now(),gone=new Set<string>();
+  for(const binding of before.bindings){
+   if(existing.has(binding.agentId)||this.applying.has(binding.agentId)||binding.status==="switching")continue;
+   if(!binding.registrationObserved&&binding.currentAccountId===null&&!await this.creationOver(binding,now))continue;
+   const known=await paseo.agents.ref(binding.agentId).refresh().then(found=>!!found,()=>undefined);
+   if(known)existing.add(binding.agentId);else if(known===false)gone.add(binding.agentId);
+  }
   await this.store.change(r=>{
    r.bindings=r.bindings.filter(binding=>{
     if(existing.has(binding.agentId)){binding.registrationObserved=true;return true;}
     if(captured.get(binding.agentId)!==JSON.stringify(binding)||this.applying.has(binding.agentId)||binding.status==="switching")return true;
-    // session_open runs before native creation/registration. A default binding
-    // that has never appeared in Paseo is not proof of a deleted agent.
-    return !binding.registrationObserved&&binding.currentAccountId===null;
+    if(gone.has(binding.agentId))return false;
+    // session_open runs before native creation/registration, so a new agent's binding that has never appeared in Paseo
+    // may belong to a creation still under way. A binding from before 0.9 starts its wait here.
+    if(!binding.registrationObserved&&binding.currentAccountId===null)binding.boundAt??=new Date(now).toISOString();
+    return true;
    });
   });
+ }
+ /** Whether a new agent's creation can no longer use its profile: the wait is over and no CLI of its launch still runs.
+  * A profile that may be in use is not released, so anything unclear about the receipt keeps the binding. */
+ private async creationOver(binding:StoredBinding,now:number):Promise<boolean>{
+  if(!binding.boundAt||now-Date.parse(binding.boundAt)<CREATION_WAIT)return false;
+  let pid:unknown,at:unknown;
+  try{({pid,at}=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(binding.agentId)+".json"),"utf8")));}
+  catch(error){return (error as NodeJS.ErrnoException).code==="ENOENT";}
+  if(typeof pid!=="number"||!Number.isInteger(pid)||pid<=0)return false;
+  return !await receiptProcessRuns(pid,at);
  }
  async setDefault(provider:Provider,id:string|null){
   await this.ready;

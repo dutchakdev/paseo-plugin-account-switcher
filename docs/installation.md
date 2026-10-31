@@ -144,7 +144,7 @@ paseo plugin enable account-switcher --host 127.0.0.1:6767
 | Apply says the native agent reload failed | `paseo plugin logs account-switcher` shows which CLI ran and why it failed. Check that this CLI runs for the daemon's user and reaches the daemon. |
 | Account not confirmed | Select the intended account and apply it again while idle. Check the native agent status if reload still fails. |
 | Limits are stale or unavailable | Read the account error, freshness, and retry time. **Refresh** respects backoff; expired authentication needs sign-in. Unreported values are not inferred. |
-| Remove is blocked | Clear the account's default and pending selections, and switch all bound agents away. Archived agents also retain bindings. |
+| Remove or sign-in is blocked | Clear the account's default and pending selections, and switch all bound agents away. Archived agents also retain bindings. An agent that failed to start holds its account for at least 10 minutes. |
 
 For loading failures:
 
@@ -153,6 +153,6 @@ paseo plugin ls account-switcher --host 127.0.0.1:6767
 paseo plugin logs account-switcher --host 127.0.0.1:6767
 ```
 
-One recovery case needs manual diagnosis: a new agent that fails before registering in Paseo can leave an unconfirmed account reservation. The plugin does not release a potentially occupied profile merely because time has passed. Bindings for normally deleted agents are removed only after checking the complete agent list; archived bindings remain for resume.
+A new agent that fails before registering in Paseo leaves an unconfirmed account reservation. The plugin releases it on a later check, at least 10 minutes after the start, once no CLI of that launch still runs and Paseo answers that the agent is gone. It does not release a potentially occupied profile merely because time has passed. Bindings for normally deleted agents are removed only after checking the complete agent list and the agent itself; archived bindings remain for resume.
 
 When reporting a problem, include versions, sanitized errors, and reproduction steps. Remove account identities, authorization links, one-time codes, tokens, and local paths you do not want to publish.

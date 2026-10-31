@@ -6,6 +6,11 @@
 
 - A tool that creates agents can name the account a new Claude or Codex agent starts on, with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment set to the account's name or ID, for example `paseo run --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work`. The named account is binding: the agent starts there whatever its limits, or the creation is refused with the reason, such as an unknown or ambiguous name, a sign-in in progress or not confirmed, **Always use the default** with another account as the default, account switching off for the provider, or a provider other than Claude and Codex. Given at creation, the variable never reaches the provider CLI, and the chat notes the start when the account is not the default. Switching later follows your settings as for any agent.
 
+### Fixed
+
+- An agent whose creation failed, for example because its CLI did not start, held its account for good: the account could not be removed or signed in again, even after a plugin reload. The next check now releases the account once 10 minutes have passed, no CLI of that launch still runs, and Paseo answers that the agent is gone. For an account held this way by an earlier release, the 10 minutes start when this version first checks it.
+- An agent in a background workspace lost its account the first time Accounts refreshed, because Paseo's agent list leaves such agents out: the account could then be removed while in use, and the agent's next CLI start ran on the system login. A binding now goes only when Paseo answers that the agent itself is gone.
+
 ## 0.8.1 - 2026-10-30
 
 ### Added
