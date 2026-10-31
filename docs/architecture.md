@@ -57,9 +57,13 @@ A new agent's binding stays unconfirmed (`currentAccountId` null) until a receip
 
 A provider default is assigned during interactive agent creation, unless the cached limits prove it would fail and the registry's per-provider `fallback` is on (the default; registries from 0.6 read as on). With `fallback` off, only the default is tried. The `agent.create` hook stores the requested model in a private environment variable; Paseo passes that environment to the same agent's first `agent.session_open`, which has the agent ID, binds the agent and removes the variable before the CLI starts.
 
+The creator can name the account instead, with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment (an account ID, or a name that exactly one account of the provider has). `bindRequested` treats it like a default with `fallback` off: it probes only that account and binds it regardless of limits, or refuses the creation: no such account, a sign-in in progress (checked again inside the registry change), an official probe that is not `ready`, integration off for the provider, or a provider other than Claude and Codex. The hook removes the variable from every session open, so neither the CLI nor a later session sees it. A binding made this way is like any other afterwards; its creation note gives the reason `requested` when the account is not the default.
+
 ```mermaid
 flowchart TD
-  A[agent.session_open, reason create] --> B{default set?}
+  A[agent.session_open, reason create] --> R{account named<br/>at creation?}
+  R -- yes --> S[probe that account only] --> H
+  R -- no --> B{default set?}
   B -- no --> Z[no binding: the CLI's own sign-in]
   B -- yes --> C[launchOrder: cached limits + model]
   C --> D{default exhausted, or plan lacks the model?}
