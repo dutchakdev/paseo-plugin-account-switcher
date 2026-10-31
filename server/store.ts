@@ -7,7 +7,7 @@ import { atomicWrite, isMissing } from "./files";
 
 export const StoredAccountSchema = AccountSchema.extend({ home: z.string(), identityKey: z.string().nullable(), generation: z.number().int(), loginToken:z.string().nullable().default(null) });
 export type StoredAccount = z.infer<typeof StoredAccountSchema>;
-const StoredBindingSchema = BindingSchema.extend({ launchAccountId: z.string().nullable(), launchToken: z.string().nullable(), registrationObserved:z.boolean().default(false) });
+const StoredBindingSchema = BindingSchema.extend({ launchAccountId: z.string().nullable(), launchToken: z.string().nullable(), registrationObserved:z.boolean().default(false), boundAt:z.string().optional() });
 export type StoredBinding = z.infer<typeof StoredBindingSchema>;
 const CommandsSchema = z.object({ claude: z.array(z.string()).nullable(), codex: z.array(z.string()).nullable() });
 export const RegistrySchema = z.object({

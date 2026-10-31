@@ -144,7 +144,7 @@ paseo plugin enable account-switcher --host 127.0.0.1:6767
 | Apply says the native agent reload failed | `paseo plugin logs account-switcher` shows which CLI ran and why it failed. Check that this CLI runs for the daemon's user and reaches the daemon. |
 | Account not confirmed | Select the intended account and apply it again while idle. Check the native agent status if reload still fails. |
 | Limits are stale or unavailable | Read the account error, freshness, and retry time. **Refresh** respects backoff; expired authentication needs sign-in. Unreported values are not inferred. |
-| Remove is blocked | Clear the account's default and pending selections, and switch all bound agents away. Archived agents also retain bindings. |
+| Remove or sign-in is blocked | Clear the account's default and pending selections, and switch all bound agents away. Archived agents also retain bindings. An agent that failed to start holds its account for 10 minutes. |
 
 For loading failures:
 

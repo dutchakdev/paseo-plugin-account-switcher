@@ -128,7 +128,7 @@ export class SwitchService {
      if(!r.integration.enabled||!r.integration.providers.includes(provider)||r.bindings.some(b=>b.agentId===agentId))return;
      if(r.defaults[provider]!==selected)throw new SwitchRefusal("The default account changed; create the agent again.");
      if(accountFrom(r,chosen).loginToken)throw new SwitchRefusal("Account sign-in is still in progress.");
-     r.bindings.push({agentId,provider,currentAccountId:null,pendingAccountId:null,launchAccountId:chosen,launchToken:randomUUID(),status:"ready",error:null,registrationObserved:false});
+     r.bindings.push({agentId,provider,currentAccountId:null,pendingAccountId:null,launchAccountId:chosen,launchToken:randomUUID(),status:"ready",error:null,registrationObserved:false,boundAt:new Date().toISOString()});
      return true;
    });
    return bound?{accountId:chosen,defaultId:selected,reason}:undefined;
@@ -157,7 +157,7 @@ export class SwitchService {
      const current=r.accounts.find(a=>a.id===account.id);
      if(!current)throw new SwitchRefusal(`${account.label} was removed; create the agent again.`);
      if(current.loginToken)throw new SwitchRefusal(`Sign-in to ${account.label} is still in progress.`);
-     r.bindings.push({agentId,provider,currentAccountId:null,pendingAccountId:null,launchAccountId:account.id,launchToken:randomUUID(),status:"ready",error:null,registrationObserved:false});
+     r.bindings.push({agentId,provider,currentAccountId:null,pendingAccountId:null,launchAccountId:account.id,launchToken:randomUUID(),status:"ready",error:null,registrationObserved:false,boundAt:new Date().toISOString()});
      return true;
    });
    if(!bound)return;

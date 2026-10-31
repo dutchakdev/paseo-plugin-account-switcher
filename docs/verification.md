@@ -55,6 +55,16 @@ The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
 
+## An agent whose creation fails — 2026-10-31
+
+With an isolated Paseo **0.14.0** daemon and a stand-in `codex` made to exit 1 as `app-server`, after one working start had cached the model list:
+
+- A named account, and separately a default: the creation failed, no agent existed, and the binding stayed. Removing the account was refused at once and succeeded once the binding's time was 11 minutes old.
+- A binding without a time, as earlier releases wrote it: the first look gave it a time and still refused; removal succeeded once that time was 11 minutes old.
+- A working start with the same aged time: the binding stayed, confirmed by its receipt, and the account stayed protected.
+
+The time was moved by editing the registry, not by waiting. Signing in again after the wait is covered by unit tests only.
+
 ## Naming an account at creation — 2026-10-31
 
 On macOS, with an isolated Paseo **0.14.0** daemon and a stand-in `codex` that records its arguments

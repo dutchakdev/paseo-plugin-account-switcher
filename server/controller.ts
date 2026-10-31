@@ -25,6 +25,9 @@ const RUNTIME_ENV=["PASEO_NODE_ENV","PASEO_DESKTOP_MANAGED","PASEO_SUPERVISED","
 function paseoCli(){const env={...process.env};for(const key of RUNTIME_ENV)delete env[key];return{command:process.env.PASEO_CLI?.trim()||"paseo",env};}
 // A revoked sign-in fails every renewal; this bounds how often it starts the CLI.
 const RENEWAL_INTERVAL=600000;
+// How long a new agent's binding outlives the agent not appearing. Paseo reports no failed creation, so only time tells one from a
+// creation still under way. It only has to cover the time until the CLI starts and reads the binding, and each plugin hook before that gets 30 seconds.
+const CREATION_WAIT=600000;
 // Agent statuses that show a launch got under way, for the receipt check: the Accounts list waits for a session that is
 // up. Failover also takes "error", which Paseo sets when a turn fails, before the plugin's turn_ended hook runs: the
 // launcher wrote the receipt when it started the CLI, so the receipt still names the account the agent started on.
@@ -113,13 +116,16 @@ export class AccountController {
    }
   }catch{return;}
   if(!complete)return;
+  const now=Date.now();
   await this.store.change(r=>{
    r.bindings=r.bindings.filter(binding=>{
     if(existing.has(binding.agentId)){binding.registrationObserved=true;return true;}
     if(captured.get(binding.agentId)!==JSON.stringify(binding)||this.applying.has(binding.agentId)||binding.status==="switching")return true;
-    // session_open runs before native creation/registration. A default binding
-    // that has never appeared in Paseo is not proof of a deleted agent.
-    return !binding.registrationObserved&&binding.currentAccountId===null;
+    if(binding.registrationObserved||binding.currentAccountId!==null)return false;
+    // session_open runs before native creation/registration, so a new agent's binding that has never appeared
+    // in Paseo is not proof of a deleted agent until the wait is over. A binding from before 0.9 starts its wait here.
+    binding.boundAt??=new Date(now).toISOString();
+    return now-Date.parse(binding.boundAt)<CREATION_WAIT;
    });
   });
  }

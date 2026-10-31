@@ -301,6 +301,77 @@ describe("deleted agent reconciliation", () => {
     expect((await controller.store.read()).bindings).toEqual([]);
   });
 
+  describe("an agent that never appeared", () => {
+    const nobody = { agents: { ...paseo.agents, list: async () => completeAgentPage([]) } } as unknown as PaseoApi;
+    afterEach(() => { vi.useRealTimers(); });
+    // Past the wait for a creation that Paseo never reports as failed.
+    const tenMinutesLater = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + 10 * 60_000 + 1); };
+    async function failedStart(requested: string | null = null) {
+      const { controller, account } = await fixture();
+      await controller.store.change(r => { r.integration.enabled = true; });
+      if (!requested) await controller.setDefault("codex", account.id);
+      await controller.switcher(paseo).bindNewAgent("failed-agent", "codex", null, requested);
+      await controller.setDefault("codex", null);
+      return { controller, account };
+    }
+
+    it("holds its account while the creation may still be under way", async () => {
+      const { controller, account } = await failedStart();
+      await expect(controller.remove(account.id, nobody)).rejects.toThrow(/used by an agent/);
+      expect((await controller.store.read()).bindings.map(b => b.agentId)).toEqual(["failed-agent"]);
+    });
+
+    it("releases its account for removal once the creation cannot still be under way", async () => {
+      const { controller, account } = await failedStart();
+      tenMinutesLater();
+      await controller.remove(account.id, nobody);
+      const state = await controller.store.read();
+      expect(state.bindings).toEqual([]);
+      expect(state.accounts.some(a => a.id === account.id)).toBe(false);
+    });
+
+    it("releases an account named at the creation the same way", async () => {
+      const { controller, account } = await failedStart("Managed");
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ agentId: "failed-agent", launchAccountId: account.id });
+      tenMinutesLater();
+      await controller.remove(account.id, nobody);
+      expect((await controller.store.read()).bindings).toEqual([]);
+    });
+
+    it("releases its account for signing in again", async () => {
+      const { controller, account } = await failedStart();
+      await expect(controller.login(nobody, account.id)).rejects.toThrow(/Switch agents away/);
+      tenMinutesLater();
+      await expect(controller.login(nobody, account.id)).resolves.toMatchObject({ terminalId: "login-terminal" });
+    });
+
+    it("gives a binding from an earlier release, which has no time, the same wait", async () => {
+      const { controller, account } = await failedStart();
+      await controller.store.change(r => { delete r.bindings[0].boundAt; });
+      tenMinutesLater();
+      await expect(controller.remove(account.id, nobody)).rejects.toThrow(/used by an agent/);
+      vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
+      await controller.remove(account.id, nobody);
+      expect((await controller.store.read()).bindings).toEqual([]);
+    });
+
+    it("keeps the binding of an agent that appeared after all", async () => {
+      const { controller, account } = await failedStart();
+      tenMinutesLater();
+      const appeared = { agents: { ...paseo.agents, list: async () => completeAgentPage(["failed-agent"]) } } as unknown as PaseoApi;
+      await expect(controller.remove(account.id, appeared)).rejects.toThrow(/used by an agent/);
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ agentId: "failed-agent", registrationObserved: true });
+    });
+
+    it("keeps the binding when the agent list is incomplete", async () => {
+      const { controller, account } = await failedStart();
+      tenMinutesLater();
+      const offline = { agents: { ...paseo.agents, list: async () => { throw new Error("offline"); } } } as unknown as PaseoApi;
+      await expect(controller.remove(account.id, offline)).rejects.toThrow(/used by an agent/);
+      expect((await controller.store.read()).bindings.map(b => b.agentId)).toEqual(["failed-agent"]);
+    });
+  });
+
   it("releases deleted-agent bindings for login while retaining archived agents across every page", async () => {
     const { controller, account } = await fixture();
     await controller.store.prepare("deleted-agent", "codex", account.id);
