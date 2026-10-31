@@ -390,6 +390,17 @@ describe("deleted agent reconciliation", () => {
       expect((await controller.store.read()).bindings).toEqual([]);
     });
 
+    it("releases its account when the receipt's PID went to a later process", async () => {
+      const { controller, account } = await failedStart();
+      await launched(controller, receiptOf(process.pid));
+      mocks.execFile.mockImplementation((...args: unknown[]) => {
+        (args.at(-1) as (error: null, result: { stdout: string }) => void)(null, { stdout: "Sat Oct 31 20:04:51 2026\n" });
+      });
+      tenMinutesLater();
+      await controller.remove(account.id, nobody);
+      expect((await controller.store.read()).bindings).toEqual([]);
+    });
+
     it.each([["cannot be read", "{"], ["names no process", JSON.stringify({ accountId: "any", launchToken: "any" })]])("holds its account when the launch receipt %s", async (_, content) => {
       const { controller, account } = await failedStart();
       await launched(controller, content);

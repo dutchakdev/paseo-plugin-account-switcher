@@ -14,6 +14,7 @@ import { SwitchRefusal, SwitchService } from "./switching";
 import { createUsageService, readCredentialVersion, type AccountReadOptions, type QuotaAccount } from "./usage";
 import { renewExpiredClaudeToken } from "./usage/claude";
 import { LoginSessions, type LoginDependencies } from "./login";
+import { receiptProcessRuns } from "./process-identity";
 
 const execFileAsync=promisify(execFile);
 // Paseo sets these for its own Node processes, this plugin's included, and removes them before it starts an outside
@@ -140,12 +141,11 @@ export class AccountController {
   * A profile that may be in use is not released, so anything unclear about the receipt keeps the binding. */
  private async creationOver(binding:StoredBinding,now:number):Promise<boolean>{
   if(!binding.boundAt||now-Date.parse(binding.boundAt)<CREATION_WAIT)return false;
-  let pid:unknown;
-  try{pid=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(binding.agentId)+".json"),"utf8")).pid;}
+  let pid:unknown,at:unknown;
+  try{({pid,at}=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(binding.agentId)+".json"),"utf8")));}
   catch(error){return (error as NodeJS.ErrnoException).code==="ENOENT";}
   if(typeof pid!=="number"||!Number.isInteger(pid)||pid<=0)return false;
-  try{process.kill(pid,0);return false;}
-  catch(error){return (error as NodeJS.ErrnoException).code==="ESRCH";}
+  return !await receiptProcessRuns(pid,at);
  }
  async setDefault(provider:Provider,id:string|null){
   await this.ready;

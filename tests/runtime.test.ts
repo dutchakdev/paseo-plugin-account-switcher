@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { PaseoApi } from "@getpaseo/client";
 import { AccountStore } from "../server/store";
@@ -79,6 +79,25 @@ describe("standalone native-provider launcher", () => {
     const result = await run(launcherPath(root, "codex"), ["app-server"], { ...process.env, PASEO_AGENT_ID: "assigned" });
     expect(result.code).not.toBe(0); expect(result.stdout).toBe(""); expect(result.stderr).toContain("profile");
   });
+
+  it("starts no CLI when its binding was released while the profile was prepared", async () => {
+    const { root, store } = await fixture(); const account = await store.add("codex", "Work");
+    await mkdir(account.home, { recursive: true });
+    await store.prepare("slow", "codex", account.id);
+    await store.change(registry => { registry.bindings[0].launchAccountId = account.id; registry.bindings[0].launchToken = "launch-1"; });
+    await writeLaunchers(store);
+    // Reading the source's config.toml waits on this FIFO, which holds the launcher in prepareProfile until the test lets go.
+    const source = (await store.read()).sourceHomes.codex; await mkdir(source, { recursive: true });
+    const config = join(source, "config.toml");
+    expect(spawnSync("mkfifo", [config]).status).toBe(0);
+    const launch = run(launcherPath(root, "codex"), ["app-server"], { ...process.env, PASEO_AGENT_ID: "slow" });
+    const reading = await open(config, "w");
+    await store.change(registry => { registry.bindings = []; });
+    await reading.close();
+    const result = await launch;
+    expect(result.code).not.toBe(0); expect(result.stdout).toBe(""); expect(result.stderr).toContain("released");
+    await expect(stat(join(root, "receipts", "slow.json"))).rejects.toThrow();
+  }, 20_000);
 
   it("refuses a profile redirected to the shared home by a symlink", async () => {
     const { root, store } = await fixture(); const account = await store.add("codex", "Redirected");

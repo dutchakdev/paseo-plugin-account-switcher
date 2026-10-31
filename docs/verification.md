@@ -64,8 +64,9 @@ With an isolated Paseo **0.14.0** daemon and a stand-in `codex` made to exit 1 a
 - A working start with the same aged time: the binding stayed, confirmed by its receipt, and the account stayed protected.
 - A creation hung with its CLI alive, with the same aged time: removal was refused. Once that CLI was killed, removal succeeded.
 - An agent in a background workspace, which `paseo ls` and the plugin's list leave out: the binding stayed and was confirmed, and removal was refused. On the code before this fix, the first `accounts.list` dropped the binding and removal succeeded.
+- A receipt whose PID belonged to a live process started after the receipt was written, with the same aged time: removal succeeded.
 
-The time was moved by editing the registry, not by waiting. Signing in again after the wait is covered by unit tests only.
+The time was moved by editing the registry, not by waiting. Signing in again after the wait, and a launcher finding its binding gone after preparing the profile, are covered by automated tests only.
 
 ## Naming an account at creation — 2026-10-31
 
