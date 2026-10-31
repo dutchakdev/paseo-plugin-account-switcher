@@ -94,7 +94,7 @@ A new Claude or Codex agent starts on its provider's default account. It starts 
 
 The replacement is the account with the largest percentage left in its tightest account-wide window; accounts without limit data come after the measured ones. Percentages do not compare the size of different plans. If every account is ruled out, the agent starts on the default, as before. Choosing an account for a chat yourself always takes precedence, and nothing changes when no default is set.
 
-To keep the default binding, for example when one provider holds both work and personal subscriptions, choose **Always use the default** under that provider in Accounts. New agents then start on the default or not at all, as in 0.6.0. **Start on another account** is the initial choice; the control appears once a provider has a default and more than one account.
+To keep the default binding, for example when one provider holds both work and personal subscriptions, choose **Always use the default** under that provider in Accounts. New agents then start on the default or not at all, as in 0.6.0, and a tool that names another account is refused. **Start on another account** is the initial choice; the control appears once a provider has a default and more than one account.
 
 Limits come from the plugin's last reading, so creating an agent does not wait for a provider's limits. It does run the official sign-in check for the default, and for each further account it tries.
 
@@ -108,7 +108,7 @@ A tool that creates agents can name the account a new Claude or Codex agent star
 paseo run --provider codex --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work "Review the open pull requests"
 ```
 
-The named account is binding, like a default under **Always use the default**: the agent starts there or is not created, and the error says why. Limits do not move it to another account. A name must belong to exactly one account of the agent's provider; use the ID when two accounts share a name. Creation is refused when no such account exists, its sign-in is still in progress, the official sign-in check does not confirm it, account switching is off for the provider, or the agent's provider is not Claude or Codex. The variable reaches neither the provider CLI nor later sessions of the agent, and the chat records the start when the account is not the default. Afterwards the agent behaves like any other: switching, and switching when a limit runs out, follow your settings.
+The named account is binding: the agent starts there or is not created, and the error says why. Limits do not move it to another account. A name must belong to exactly one account of the agent's provider; use the ID when two accounts share a name. Creation is refused when no such account exists, its sign-in is still in progress, the official sign-in check does not confirm it, **Always use the default** is on and the account is not the default, account switching is off for the provider, or the agent's provider is not Claude or Codex. The variable works only at creation: it reaches neither the provider CLI nor later sessions of the agent, and set in a provider's configured environment it selects nothing. The chat records the start when the account is not the default. Afterwards the agent behaves like any other: switching, and switching when a limit runs out, follow your settings.
 
 ## Switch an existing chat
 
@@ -192,7 +192,7 @@ Before disabling or removing the plugin, select **Disable** in Accounts to resto
 
 ## Scope
 
-This project supports same-provider switching with subscription accounts. Switching is manual, except for the opt-in automatic switch after a turn stopped on a used-up limit. Rotating accounts to spread usage, API-key authentication, and Claude-to-Codex transfers are outside its scope. Provider authentication and limit formats can change with CLI versions; unsupported data is shown as unavailable.
+This project supports same-provider switching with subscription accounts. Switching is manual, except for the opt-in automatic switch after a turn stopped on a used-up limit. A tool can name the account a new agent starts on; that choice is the tool's, and the plugin itself never rotates accounts. Rotating accounts to spread usage, API-key authentication, and Claude-to-Codex transfers are outside its scope. Provider authentication and limit formats can change with CLI versions; unsupported data is shown as unavailable.
 
 Automated tests cover the implementation with synthetic accounts and provider responses. They do not establish real A → B → A switching, compaction, child-session behavior, or rewind for your accounts. Recorded checks and remaining live verification are in [verification](docs/verification.md).
 

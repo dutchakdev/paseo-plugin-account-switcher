@@ -1,6 +1,6 @@
 # Verification
 
-Last checked: **2026-10-30**. These results describe observed checks, not a guarantee
+Last checked: **2026-10-31**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
 
 ## Automated checks
@@ -54,6 +54,25 @@ texts. Rebuilding from a different working directory produced identical output.
 The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
+
+## Naming an account at creation — 2026-10-31
+
+On macOS, with an isolated Paseo **0.14.0** daemon and a stand-in `codex` that records its arguments
+and environment, the plugin loaded from source and `paseo run --env` created the agents. No provider
+account or model was involved, so this checks the path, not a real session.
+
+- A named account: the agent's own `codex app-server` ran with that account's `CODEX_HOME`, no CLI
+  call saw the variable, the timeline gained the `requested` note, and a reload kept the account.
+- Refused, with the reason in the CLI's error and no agent created: an unknown name, an agent of
+  another provider, and another account under **Always use the default**. In the last case no CLI
+  started.
+- **Always use the default** with the default named: the agent started on the default, with no note.
+- No variable: the agent started on the default, with no `CODEX_HOME` set.
+- The variable in `agents.providers.codex.env`: the agent stayed on the default, and the CLI saw the
+  variable.
+
+A refused `paseo run` leaves the empty workspace it created first. The Claude path is covered by unit
+tests only.
 
 ## The CLI behind a native reload — 2026-10-30
 

@@ -4,7 +4,7 @@
 
 ### Added
 
-- A tool that creates agents can name the account a new Claude or Codex agent starts on, with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment set to the account's name or ID, for example `paseo run --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work`. The named account is binding: the agent starts there whatever its limits, or the creation is refused with the reason, such as an unknown or ambiguous name, a sign-in in progress or not confirmed, account switching off for the provider, or a provider other than Claude and Codex. The variable never reaches the provider CLI, and the chat notes the start when the account is not the default. Switching later follows your settings as for any agent.
+- A tool that creates agents can name the account a new Claude or Codex agent starts on, with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment set to the account's name or ID, for example `paseo run --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work`. The named account is binding: the agent starts there whatever its limits, or the creation is refused with the reason, such as an unknown or ambiguous name, a sign-in in progress or not confirmed, **Always use the default** with another account as the default, account switching off for the provider, or a provider other than Claude and Codex. Given at creation, the variable never reaches the provider CLI, and the chat notes the start when the account is not the default. Switching later follows your settings as for any agent.
 
 ## 0.8.1 - 2026-10-30
 

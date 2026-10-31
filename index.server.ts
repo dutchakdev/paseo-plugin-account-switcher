@@ -137,7 +137,7 @@ export default function contribute(server:PluginServerContext){
  });
  const removeHook=server.before("agent.session_open",async({request},{paseo})=>{
   await controller.ready;
-  // Neither hint reaches the CLI, on this or any later session of the agent.
+  // Neither hint from the creation reaches the CLI, on this or any later session of the agent.
   const {[MODEL_ENV]:model,[ACCOUNT_ENV]:account,...env}=request.env;
   const creating=request.purpose==="interactive"&&request.reason==="create",requested=account?.trim()||null;
   if(creating&&requested&&request.provider!=="claude"&&request.provider!=="codex")throw new SwitchRefusal(`Account Switcher manages only Claude Code and Codex accounts, so the ${request.provider} agent cannot start on ${requested}.`);

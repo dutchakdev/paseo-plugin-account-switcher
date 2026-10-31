@@ -394,6 +394,26 @@ describe("an account named when the agent is created",()=>{
   await expect(makeService(store,{checkAccount}).bindNewAgent("unready","codex",null,"Third")).rejects.toThrow(/Third requires authentication/);
   expect(checkAccount.mock.calls).toEqual([[third.id]]);expect((await store.read()).bindings).toEqual([]);
  });
+ it("refuses another account under Always use the default, without probing it",async()=>{
+  const {store,third}=await named(),checkAccount=vi.fn(async()=>({authStatus:"ready"}));
+  await store.change(r=>{r.fallback.codex=false;});
+  await expect(makeService(store,{checkAccount}).bindNewAgent("held","codex",null,third.id)).rejects.toThrow("Codex always uses its default account, so the agent cannot start on Third. Choose Start on another account in Accounts to allow it.");
+  expect(checkAccount).not.toHaveBeenCalled();expect((await store.read()).bindings).toEqual([]);
+ });
+ it("refuses when Always use the default is chosen while the account is probed",async()=>{
+  const {store}=await named();
+  const checkAccount=async()=>{await store.change(r=>{r.fallback.codex=false;});return{authStatus:"ready"};};
+  await expect(makeService(store,{checkAccount}).bindNewAgent("racing","codex",null,"Third")).rejects.toThrow(/always uses its default account/);
+  expect((await store.read()).bindings).toEqual([]);
+ });
+ it("accepts the default itself under Always use the default",async()=>{
+  const {store,target}=await named();await store.change(r=>{r.fallback.codex=false;});
+  await expect(makeService(store).bindNewAgent("default","codex",null,"Second")).resolves.toEqual({accountId:target.id,defaultId:target.id,reason:null});
+ });
+ it("has no default to keep when none is set",async()=>{
+  const {store,third}=await named();await store.change(r=>{r.fallback.codex=false;r.defaults.codex=null;});
+  await expect(makeService(store).bindNewAgent("no-default","codex",null,"Third")).resolves.toEqual({accountId:third.id,defaultId:null,reason:"requested"});
+ });
  it("refuses while account switching is off for the provider, or off entirely",async()=>{
   const {store}=await named(),service=makeService(store);
   await store.change(r=>{r.integration.providers=["claude"];});

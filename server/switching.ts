@@ -133,8 +133,8 @@ export class SwitchService {
    });
    return bound?{accountId:chosen,defaultId:selected,reason}:undefined;
  }
- /** An account named when the agent is created is binding, like a default with fallback off: the agent starts there or not
-  * at all. Limits do not move it; only the official sign-in check and a sign-in in progress refuse it. */
+ /** An account named when the agent is created is binding: the agent starts there or not at all. Limits do not move it;
+  * Always use the default, the official sign-in check and a sign-in in progress refuse it. */
  private async bindRequested(state:Registry,agentId:string,provider:Provider,requested:string):Promise<{accountId:string;defaultId:string|null;reason:"requested"|null}|undefined>{
    const off=()=>new SwitchRefusal(`Account switching is off for ${cliName[provider]}, so the agent cannot start on ${requested}.`);
    if(!state.integration.enabled||!state.integration.providers.includes(provider))throw off();
@@ -143,6 +143,9 @@ export class SwitchService {
    const accounts=state.accounts.filter(a=>a.provider===provider),named=accounts.filter(a=>a.label.trim()===requested);
    const account=accounts.find(a=>a.id===requested)??(named.length===1?named[0]:undefined);
    if(!account)throw new SwitchRefusal(named.length>1?`More than one ${cliName[provider]} account is named ${requested}; name it by its ID instead.`:`No ${cliName[provider]} account is named ${requested}.`);
+   // Always use the default promises the default or nothing, so it outranks whoever creates the agent. With no default set it has nothing to keep.
+   const keepDefault=(r:Registry)=>{const selected=r.defaults[provider];if(selected&&!r.fallback[provider]&&selected!==account.id)throw new SwitchRefusal(`${cliName[provider]} always uses its default account, so the agent cannot start on ${account.label}. Choose Start on another account in Accounts to allow it.`);};
+   keepDefault(state);
    if(account.loginToken)throw new SwitchRefusal(`Sign-in to ${account.label} is still in progress.`);
    const {authStatus}=await this.deps.checkAccount(account.id);
    if(authStatus!=="ready")throw new SwitchRefusal(`${account.label} requires authentication. Sign in to it, or start the agent on another account.`);
@@ -150,6 +153,7 @@ export class SwitchService {
    const bound=await this.deps.store.change(r=>{
      if(!r.integration.enabled||!r.integration.providers.includes(provider))throw off();
      if(r.bindings.some(b=>b.agentId===agentId))return;
+     keepDefault(r);
      const current=r.accounts.find(a=>a.id===account.id);
      if(!current)throw new SwitchRefusal(`${account.label} was removed; create the agent again.`);
      if(current.loginToken)throw new SwitchRefusal(`Sign-in to ${account.label} is still in progress.`);
