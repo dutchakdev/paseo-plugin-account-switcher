@@ -13,6 +13,8 @@ import type { AccountNote } from "./shared/timeline";
 
 // Paseo hands `agent.create`'s environment to the same agent's first `agent.session_open`, which alone knows the agent ID.
 const MODEL_ENV="PASEO_ACCOUNT_SWITCHER_MODEL";
+// Set by whoever creates the agent (e.g. `paseo run --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work`): the account it starts on.
+const ACCOUNT_ENV="PASEO_ACCOUNT_SWITCHER_ACCOUNT";
 // The prompt that resumes an agent's work on the account it was switched to.
 const CONTINUE="Continue.";
 const reason=(error:unknown)=>error instanceof Error?error.message:String(error);
@@ -135,8 +137,11 @@ export default function contribute(server:PluginServerContext){
  });
  const removeHook=server.before("agent.session_open",async({request},{paseo})=>{
   await controller.ready;
-  const {[MODEL_ENV]:model,...env}=request.env;
-  if(request.purpose==="interactive"&&request.reason==="create"&&(request.provider==="claude"||request.provider==="codex")){await controller.ensureRuntime(paseo);const bound=await controller.switcher(paseo).bindNewAgent(request.agentId,request.provider,model||null);
+  // Neither hint from the creation reaches the CLI, on this or any later session of the agent.
+  const {[MODEL_ENV]:model,[ACCOUNT_ENV]:account,...env}=request.env;
+  const creating=request.purpose==="interactive"&&request.reason==="create",requested=account?.trim()||null;
+  if(creating&&requested&&request.provider!=="claude"&&request.provider!=="codex")throw new SwitchRefusal(`Account Switcher manages only Claude Code and Codex accounts, so the ${request.provider} agent cannot start on ${requested}.`);
+  if(creating&&(request.provider==="claude"||request.provider==="codex")){await controller.ensureRuntime(paseo);const bound=await controller.switcher(paseo).bindNewAgent(request.agentId,request.provider,model||null,requested);
    const reason=bound?.reason;
    if(bound&&reason){
     const started=await note(request.agentId,async()=>{const state=await controller.store.read(),to=labelOf(state,bound.accountId);return to?{kind:"started",from:labelOf(state,bound.defaultId),to,reason}:null;});

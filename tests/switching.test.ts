@@ -333,3 +333,99 @@ describe("what a failed switch may show",()=>{
   await expect(failure).rejects.not.toBeInstanceOf(SwitchRefusal);
  });
 });
+
+describe("an account named when the agent is created",()=>{
+ const later=new Date(Date.now()+3_600_000).toISOString();
+ const usedUp=(accountId:string)=>({accountId,provider:"codex" as const,status:"ok" as const,plan:null,
+  windows:[{id:"primary",label:"5 hours",usedPercent:100,windowDurationMins:300,resetsAt:later,scope:"account" as const}],fetchedAt:later,checkedAt:later,nextRetryAt:null,error:null});
+ async function named(){
+  const {store,target}=await fixture(),third=await store.add("codex","Third");
+  await store.change(r=>{r.defaults.codex=target.id;});
+  return {store,target,third};
+ }
+ const launched=async(store:AccountStore,agentId:string)=>(await store.read()).bindings.find(b=>b.agentId===agentId);
+ it("binds that account instead of the default, by name or by ID, and probes only that account",async()=>{
+  const {store,target,third}=await named(),checkAccount=vi.fn(async()=>({authStatus:"ready"}));
+  const service=makeService(store,{checkAccount});
+  await expect(service.bindNewAgent("by-name","codex",null,"Third")).resolves.toEqual({accountId:third.id,defaultId:target.id,reason:"requested"});
+  await expect(service.bindNewAgent("by-id","codex",null,third.id)).resolves.toEqual({accountId:third.id,defaultId:target.id,reason:"requested"});
+  expect(checkAccount.mock.calls).toEqual([[third.id],[third.id]]);
+  const binding=await launched(store,"by-name");
+  expect(binding).toMatchObject({launchAccountId:third.id,currentAccountId:null,pendingAccountId:null,status:"ready"});
+  expect(binding?.launchToken).toBeTruthy();
+ });
+ it("starts there even when its limit is used up, since the caller chose it",async()=>{
+  const {store,third}=await named(),service=makeService(store,{usage:async()=>[usedUp(third.id)]});
+  await expect(service.bindNewAgent("chosen","codex",null,"Third")).resolves.toMatchObject({accountId:third.id,reason:"requested"});
+ });
+ it("gives no reason when the named account is the default, and binds it while no default is set",async()=>{
+  const {store,target,third}=await named(),service=makeService(store);
+  await expect(service.bindNewAgent("default","codex",null,"Second")).resolves.toEqual({accountId:target.id,defaultId:target.id,reason:null});
+  await store.change(r=>{r.defaults.codex=null;});
+  await expect(service.bindNewAgent("no-default","codex",null,"Third")).resolves.toEqual({accountId:third.id,defaultId:null,reason:"requested"});
+ });
+ it.each([
+  ["an unknown name","Nobody",/No Codex account is named Nobody/],
+  ["another provider's account","Claude only",/No Codex account is named Claude only/],
+  ["a name two accounts share","Twin",/More than one Codex account is named Twin; name it by its ID/],
+ ])("refuses %s without binding anything",async(_case,requested,message)=>{
+  const {store}=await named();await store.add("claude","Claude only");await store.add("codex","Twin");await store.add("codex","Twin");
+  await expect(makeService(store).bindNewAgent("refused","codex",null,requested)).rejects.toThrow(message);
+  expect((await store.read()).bindings).toEqual([]);
+ });
+ it("still binds one of two accounts sharing a name by its ID",async()=>{
+  const {store}=await named(),twin=await store.add("codex","Twin");await store.add("codex","Twin");
+  await expect(makeService(store).bindNewAgent("by-id","codex",null,twin.id)).resolves.toMatchObject({accountId:twin.id});
+ });
+ it("refuses an account whose sign-in is in progress",async()=>{
+  const {store,third}=await named();await store.change(r=>{r.accounts.find(a=>a.id===third.id)!.loginToken="login-in-progress";});
+  const checkAccount=vi.fn(async()=>({authStatus:"ready"}));
+  await expect(makeService(store,{checkAccount}).bindNewAgent("signing-in","codex",null,"Third")).rejects.toThrow(/Sign-in to Third is still in progress/);
+  expect(checkAccount).not.toHaveBeenCalled();expect((await store.read()).bindings).toEqual([]);
+ });
+ it("refuses a sign-in that starts while the account is probed",async()=>{
+  const {store,third}=await named();
+  const checkAccount=async()=>{await store.change(r=>{r.accounts.find(a=>a.id===third.id)!.loginToken="login-in-progress";});return{authStatus:"ready"};};
+  await expect(makeService(store,{checkAccount}).bindNewAgent("racing","codex",null,"Third")).rejects.toThrow(/still in progress/);
+  expect((await store.read()).bindings).toEqual([]);
+ });
+ it.each(["needs_auth","unknown","error"])("refuses the account when the official auth probe returns %s, without trying another",async authStatus=>{
+  const {store,third}=await named(),checkAccount=vi.fn(async()=>({authStatus}));
+  await expect(makeService(store,{checkAccount}).bindNewAgent("unready","codex",null,"Third")).rejects.toThrow(/Third requires authentication/);
+  expect(checkAccount.mock.calls).toEqual([[third.id]]);expect((await store.read()).bindings).toEqual([]);
+ });
+ it("refuses another account under Always use the default, without probing it",async()=>{
+  const {store,third}=await named(),checkAccount=vi.fn(async()=>({authStatus:"ready"}));
+  await store.change(r=>{r.fallback.codex=false;});
+  await expect(makeService(store,{checkAccount}).bindNewAgent("held","codex",null,third.id)).rejects.toThrow("Codex always uses its default account, so the agent cannot start on Third. Choose Start on another account in Accounts to allow it.");
+  expect(checkAccount).not.toHaveBeenCalled();expect((await store.read()).bindings).toEqual([]);
+ });
+ it("refuses when Always use the default is chosen while the account is probed",async()=>{
+  const {store}=await named();
+  const checkAccount=async()=>{await store.change(r=>{r.fallback.codex=false;});return{authStatus:"ready"};};
+  await expect(makeService(store,{checkAccount}).bindNewAgent("racing","codex",null,"Third")).rejects.toThrow(/always uses its default account/);
+  expect((await store.read()).bindings).toEqual([]);
+ });
+ it("accepts the default itself under Always use the default",async()=>{
+  const {store,target}=await named();await store.change(r=>{r.fallback.codex=false;});
+  await expect(makeService(store).bindNewAgent("default","codex",null,"Second")).resolves.toEqual({accountId:target.id,defaultId:target.id,reason:null});
+ });
+ it("has no default to keep when none is set",async()=>{
+  const {store,third}=await named();await store.change(r=>{r.fallback.codex=false;r.defaults.codex=null;});
+  await expect(makeService(store).bindNewAgent("no-default","codex",null,"Third")).resolves.toEqual({accountId:third.id,defaultId:null,reason:"requested"});
+ });
+ it("refuses while account switching is off for the provider, or off entirely",async()=>{
+  const {store}=await named(),service=makeService(store);
+  await store.change(r=>{r.integration.providers=["claude"];});
+  await expect(service.bindNewAgent("off-for-codex","codex",null,"Third")).rejects.toThrow("Account switching is off for Codex, so the agent cannot start on Third.");
+  await store.change(r=>{r.integration.providers=["claude","codex"];r.integration.enabled=false;});
+  await expect(service.bindNewAgent("off","codex",null,"Third")).rejects.toThrow(/Account switching is off for Codex/);
+  expect((await store.read()).bindings).toEqual([]);
+ });
+ it("leaves an agent that already has a binding as it is",async()=>{
+  const {store,target}=await named(),service=makeService(store);
+  await service.bindNewAgent("bound","codex");
+  await expect(service.bindNewAgent("bound","codex",null,"Third")).resolves.toBeUndefined();
+  expect((await launched(store,"bound"))?.launchAccountId).toBe(target.id);
+ });
+});

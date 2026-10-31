@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BindingSchema, cliName, type Binding, type Provider, type UsageSnapshot } from "../shared/contracts";
 import { defaultBlocker, launchOrder, type Blocker } from "./selection";
-import { AccountStore, accountFrom, type StoredBinding } from "./store";
+import { AccountStore, accountFrom, type Registry, type StoredBinding } from "./store";
 
 export interface SwitchDependencies {
  store:AccountStore;
@@ -103,8 +103,9 @@ export class SwitchService {
    }
  }
  /** Binds a new agent to the default account, or to the next usable one when provider data shows the default would fail. */
- async bindNewAgent(agentId:string,provider:Provider,model:string|null=null):Promise<{accountId:string;defaultId:string;reason:Blocker|"sign-in"|"unverified"|null}|undefined>{
+ async bindNewAgent(agentId:string,provider:Provider,model:string|null=null,requested:string|null=null):Promise<{accountId:string;defaultId:string|null;reason:Blocker|"sign-in"|"unverified"|"requested"|null}|undefined>{
    const state=await this.deps.store.read();
+   if(requested!==null)return this.bindRequested(state,agentId,provider,requested);
    if(!state.integration.enabled||!state.integration.providers.includes(provider)||state.bindings.some(b=>b.agentId===agentId))return;
    const selected=state.defaults[provider];if(!selected)return;
    const account=accountFrom(state,selected);
@@ -131,5 +132,36 @@ export class SwitchService {
      return true;
    });
    return bound?{accountId:chosen,defaultId:selected,reason}:undefined;
+ }
+ /** An account named when the agent is created is binding: the agent starts there or not at all. Limits do not move it;
+  * Always use the default, the official sign-in check and a sign-in in progress refuse it. */
+ private async bindRequested(state:Registry,agentId:string,provider:Provider,requested:string):Promise<{accountId:string;defaultId:string|null;reason:"requested"|null}|undefined>{
+   const off=()=>new SwitchRefusal(`Account switching is off for ${cliName[provider]}, so the agent cannot start on ${requested}.`);
+   if(!state.integration.enabled||!state.integration.providers.includes(provider))throw off();
+   if(state.bindings.some(b=>b.agentId===agentId))return;
+   // An ID names one account; a name must name exactly one account of the provider.
+   const accounts=state.accounts.filter(a=>a.provider===provider),named=accounts.filter(a=>a.label.trim()===requested);
+   const account=accounts.find(a=>a.id===requested)??(named.length===1?named[0]:undefined);
+   if(!account)throw new SwitchRefusal(named.length>1?`More than one ${cliName[provider]} account is named ${requested}; name it by its ID instead.`:`No ${cliName[provider]} account is named ${requested}.`);
+   // Always use the default promises the default or nothing, so it outranks whoever creates the agent. With no default set it has nothing to keep.
+   const keepDefault=(r:Registry)=>{const selected=r.defaults[provider];if(selected&&!r.fallback[provider]&&selected!==account.id)throw new SwitchRefusal(`${cliName[provider]} always uses its default account, so the agent cannot start on ${account.label}. Choose Start on another account in Accounts to allow it.`);};
+   keepDefault(state);
+   if(account.loginToken)throw new SwitchRefusal(`Sign-in to ${account.label} is still in progress.`);
+   const {authStatus}=await this.deps.checkAccount(account.id);
+   if(authStatus!=="ready")throw new SwitchRefusal(`${account.label} requires authentication. Sign in to it, or start the agent on another account.`);
+   const defaultId=state.defaults[provider]??null;
+   const bound=await this.deps.store.change(r=>{
+     if(!r.integration.enabled||!r.integration.providers.includes(provider))throw off();
+     if(r.bindings.some(b=>b.agentId===agentId))return;
+     keepDefault(r);
+     const current=r.accounts.find(a=>a.id===account.id);
+     if(!current)throw new SwitchRefusal(`${account.label} was removed; create the agent again.`);
+     if(current.loginToken)throw new SwitchRefusal(`Sign-in to ${account.label} is still in progress.`);
+     r.bindings.push({agentId,provider,currentAccountId:null,pendingAccountId:null,launchAccountId:account.id,launchToken:randomUUID(),status:"ready",error:null,registrationObserved:false});
+     return true;
+   });
+   if(!bound)return;
+   console.log(`New agent ${agentId}: starting on the requested ${cliName[provider]} account ${account.id}.`);
+   return {accountId:account.id,defaultId,reason:account.id===defaultId?null:"requested"};
  }
 }
