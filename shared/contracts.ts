@@ -81,5 +81,5 @@ export const applySwitch = defineRpc({ name: "switch.apply", input: z.object({ a
 // moves the agent from; the switch is refused when the agent no longer runs on it.
 export const applyFailover = defineRpc({ name: "failover.apply", input: z.object({ agentId: z.string().min(1), accountId: z.string().min(1), rowId: z.string().min(1), fromId: z.string().min(1).optional() }), output: Empty });
 export const setIntegration = defineRpc({ name: "integration.set", input: z.object({ enabled: z.boolean() }), output: StateSchema });
-export const listUsage = defineRpc({ name: "usage.list", input: z.object({ visible: z.boolean().optional() }), output: z.object({ accounts: z.array(UsageSnapshotSchema) }) });
-export const refreshUsage = defineRpc({ name: "usage.refresh", input: z.object({ accountId: z.string().optional() }), output: z.object({ accounts: z.array(UsageSnapshotSchema) }) });
+export const listUsage = defineRpc({ name: "usage.list", input: z.object({ visible: z.boolean().optional() }), output: z.object({ accounts: z.array(UsageSnapshotSchema), checksOff: z.boolean().optional() }) });
+export const refreshUsage = defineRpc({ name: "usage.refresh", input: z.object({ accountId: z.string().optional() }), output: z.object({ accounts: z.array(UsageSnapshotSchema), checksOff: z.boolean().optional() }) });

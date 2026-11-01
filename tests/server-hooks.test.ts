@@ -23,6 +23,7 @@ const controller = vi.hoisted(() => {
   // The readings it already has, which cost no provider request.
   const cached: unknown[] = [];
   const list = vi.fn(async () => structuredClone(cached));
+  const checksEnabled = vi.fn(async () => true);
   // Agents whose launch receipt matches their binding. Like the controller, `accountOf` confirms such a launch for good.
   const receipts = new Set<string>();
   const accountOf = vi.fn(async (_paseo: unknown, agentId: string, provider: string, state: typeof registry = registry) => {
@@ -34,9 +35,9 @@ const controller = vi.hoisted(() => {
     return bound.launchAccountId;
   });
   return {
-    bindNewAgent, apply, prepare, switchTo, read, change, refresh, readings, list, cached, receipts, accountOf, registry,
+    bindNewAgent, apply, prepare, switchTo, read, change, refresh, readings, list, cached, checksEnabled, receipts, accountOf, registry,
     instance: { ready: Promise.resolve(), ensureRuntime: vi.fn(async () => {}), switcher: () => ({ bindNewAgent, apply, prepare, switchTo }), close: vi.fn(async () => {}),
-      observeAgentRegistration: vi.fn(), store: { read, change }, usage: { refresh, list }, accountOf },
+      observeAgentRegistration: vi.fn(), store: { read, change }, usage: { refresh, list, checksEnabled }, accountOf },
   };
 });
 vi.mock("../server/controller", () => ({ AccountController: function AccountController() { return controller.instance; } }));
@@ -288,6 +289,15 @@ describe("a turn that fails on a used-up account", () => {
     controller.prepare.mockClear(); controller.switchTo.mockClear(); controller.refresh.mockClear(); controller.list.mockClear(); controller.receipts.clear();
   });
 
+  it("reads no account and offers no switch while the host's usage checks are off", async () => {
+    const { on } = startAll();
+    const { paseo, appended } = paseoRecorder();
+    readings(reading("work", 100), reading("second", 10));
+    controller.checksEnabled.mockResolvedValueOnce(false);
+    await on.get("agent.turn_ended")!(ended(), { paseo });
+    expect(controller.refresh).not.toHaveBeenCalled();
+    expect(rows(appended)).toEqual([]);
+  });
   it("refreshes the agent's account and offers a switch to the account with room", async () => {
     const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
     await on.get("agent.turn_ended")!(ended(), { paseo });
