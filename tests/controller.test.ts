@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   prepareRuntime: vi.fn(), reconcileIntegration: vi.fn(), execFile: vi.fn(), renewExpiredClaudeToken: vi.fn(),
   failRemovePath: undefined as string | undefined,
   usage: {
+    checksEnabled: vi.fn(async () => true),
     start: vi.fn(), close: vi.fn(), invalidate: vi.fn(), refresh: vi.fn(), list: vi.fn(),
   },
 }));
@@ -735,6 +736,26 @@ describe("native reload", () => {
     expect(new Set(mocks.execFile.mock.calls.map(call => call[0]))).toEqual(new Set([cli]));
   });
 
+  it("reloads through the SDK on a host that has it, and starts no CLI", async () => {
+    vi.stubEnv("PASEO_CLI", "/nowhere/paseo");
+    const { controller, account, commands, lazy } = await lazyFixture("sdk-agent");
+    const reload = vi.fn(async () => null);
+    const handle = lazy.agents.ref("sdk-agent");
+    const withSdk = { agents: { ref: () => ({ ...handle, reload }) } } as unknown as PaseoApi;
+    await expect(controller.switcher(withSdk).apply("sdk-agent")).resolves.toMatchObject({ currentAccountId: account.id, status: "ready" });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(commands).toHaveBeenCalledTimes(1);
+    expect(mocks.execFile.mock.calls.filter(call => (call[1] as string[]).includes("reload"))).toEqual([]);
+  });
+  it("keeps the cause of an SDK reload's failure in the plugin log and tries no CLI after it", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { controller, lazy } = await lazyFixture("sdk-broken");
+    const handle = lazy.agents.ref("sdk-broken");
+    const withSdk = { agents: { ref: () => ({ ...handle, reload: async () => { throw new Error("session at /private/path\nwould not open"); } }) } } as unknown as PaseoApi;
+    await expect(controller.switcher(withSdk).apply("sdk-broken")).rejects.toThrow(/^The native agent reload failed\. Check the agent status and try again\.$/);
+    expect(log).toHaveBeenCalledWith("Native reload of agent sdk-broken failed: session at /private/path would not open");
+    expect(mocks.execFile.mock.calls.filter(call => (call[1] as string[]).includes("reload"))).toEqual([]);
+  });
   it("keeps the cause of a failed reload in the plugin log and out of the chat", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.execFile.mockImplementationOnce((...args: unknown[]) => {

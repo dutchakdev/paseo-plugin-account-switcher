@@ -11,7 +11,12 @@ export { readCredentialVersion } from "./credentials";
 export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[]; models?: string[] | null; usageAllowed?: boolean | null };
 export type FetchUsage = (account: QuotaAccount, signal?: AbortSignal) => Promise<CollectedUsage>;
 export type AccountReadOptions = { verifyAccountId?: string };
-export type UsageOptions = { getAccounts: (input?: AccountReadOptions) => Promise<QuotaAccount[]>; fetchUsage?: FetchUsage; cachePath?: string; now?: () => number };
+export type UsageOptions = { getAccounts: (input?: AccountReadOptions) => Promise<QuotaAccount[]>; fetchUsage?: FetchUsage; cachePath?: string; now?: () => number; checksEnabled?: () => Promise<boolean> };
+
+/** Paseo's Check usage host setting, from 0.15: only an explicit `false` turns it off, so a host that never wrote it stays on. */
+export async function usageChecksEnabled(configPath: string): Promise<boolean> {
+  try {return JSON.parse(await readFile(configPath,"utf8"))?.daemon?.usage?.enabled!==false;} catch {return true;}
+}
 export class UsageError extends Error {
   constructor(public readonly status: "needs_auth" | "unavailable", public readonly code: string, public readonly retryAfterMs?: number) {
     super(status === "needs_auth" ? "Sign in again to retrieve limits." : "The limits service is temporarily unavailable.");
@@ -37,6 +42,7 @@ export function createUsageService(options: UsageOptions) {
   const cached = new Map<string, {fingerprint: string; accountFingerprint?: string; snapshot: UsageSnapshot}>();
   const now = options.now ?? Date.now;
   const fetchUsage = options.fetchUsage ?? fetchProvider;
+  const checksEnabled = async () => {try {return await (options.checksEnabled?.() ?? true);} catch {return true;}};
   let visibleUntil = -1;
   let timer: ReturnType<typeof setInterval> | undefined;
   let closed = false;
@@ -134,7 +140,8 @@ export function createUsageService(options: UsageOptions) {
     const promise = (async () => {
       await acquire();
       try {
-        if (closed || entries.get(account.id) !== entry) return;
+        // A request that waited for its turn asks again: the setting may have been turned off since its round began.
+        if (closed || entries.get(account.id) !== entry || !await checksEnabled()) return;
         entry.attemptedAt = now();
         let result: CollectedUsage | undefined;
         let failure: UsageError | undefined;
@@ -181,11 +188,11 @@ export function createUsageService(options: UsageOptions) {
   const snapshots = (accounts: QuotaAccount[]) => accounts.map(a=>structuredClone(entries.get(a.id)?.snapshot??empty(a)));
   async function refresh(accountId?: string): Promise<UsageSnapshot[]> {
     const accounts=await sync();
-    await Promise.all(accounts.filter(account=>!accountId||account.id===accountId).map(refreshOne));
+    if(await checksEnabled())await Promise.all(accounts.filter(account=>!accountId||account.id===accountId).map(refreshOne));
     return snapshots(await sync());
   }
   async function tick(): Promise<void> {
-    if(closed)return;
+    if(closed||!await checksEnabled())return;
     const accounts=await sync();
     const cadence=now()<visibleUntil?VISIBLE:BACKGROUND;
     await Promise.all(accounts.filter(account=>{
@@ -221,5 +228,5 @@ export function createUsageService(options: UsageOptions) {
     await Promise.allSettled([...flights.values()].map(flight=>flight.promise));
     await writes;
   }
-  return {list,refresh,start,close,invalidate};
+  return {list,refresh,start,close,invalidate,checksEnabled};
 }

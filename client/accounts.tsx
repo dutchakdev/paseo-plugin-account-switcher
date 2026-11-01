@@ -22,8 +22,8 @@ function listed(account: Account, state: AccountState): boolean {
   return state.providers[account.provider].available || account.source === "managed";
 }
 
-function AccountCard({ account, state, snapshot, now, theme, layout, host, onChanged, onStarted, onResume }: AccountsProps & SignInActions & {
-  account: Account; state: AccountState; snapshot: UsageSnapshot | undefined; now: number;
+function AccountCard({ account, state, snapshot, checksOff, now, theme, layout, host, onChanged, onStarted, onResume }: AccountsProps & SignInActions & {
+  account: Account; state: AccountState; snapshot: UsageSnapshot | undefined; checksOff: boolean; now: number;
 }) {
   const rename = useRpc(renameAccount);
   const remove = useRpc(removeAccount);
@@ -81,7 +81,7 @@ function AccountCard({ account, state, snapshot, now, theme, layout, host, onCha
       {"sessionId" in loginSession ? "Finish signing in in your browser. Status and limits will update automatically." : "A sign-in from an older version is still open. Cancel it, then sign in again to use the browser flow."}
     </Notice> : null}
     {panel === "menu" ? <View style={{ ...row, paddingTop: 2 }}>
-      <Button theme={theme} variant="ghost" disabled={busy || Boolean(loginSession)} onPress={() => action.run(() => refresh({ accountId: account.id }))}>Refresh limits</Button>
+      <Button theme={theme} variant="ghost" disabled={busy || checksOff || Boolean(loginSession)} onPress={() => action.run(() => refresh({ accountId: account.id }))}>Refresh limits</Button>
       <Button theme={theme} variant="ghost" disabled={busy} onPress={() => action.run(async () => {
         const result = await check({ accountId: account.id });
         setNotice(result.authStatus === "ready" ? "Sign-in confirmed. You can now select this account for agents." : "Sign-in is not confirmed yet. Finish signing in in your browser, then check again.");
@@ -111,7 +111,7 @@ function AccountCard({ account, state, snapshot, now, theme, layout, host, onCha
     {notice ? <Notice theme={theme}>{notice}</Notice> : null}
     {action.error ? <Notice theme={theme} tone="danger">{errorMessage(action.error)}</Notice> : null}
     <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact={layout.compact}
-      onRefresh={loginSession ? undefined : () => action.run(() => refresh({ accountId: account.id }))} refreshing={busy} />
+      onRefresh={loginSession || checksOff ? undefined : () => action.run(() => refresh({ accountId: account.id }))} refreshing={busy} />
   </View>;
 }
 
@@ -177,6 +177,7 @@ export function AccountsSurface(props: AccountsProps) {
   const onStarted = (account: Account, session: LoginSession) => setSignIn({ account, hostId: host.id, sessionId: session.id, initial: session, autoOpen: true });
   const onResume = (account: Account, sessionId: string) => setSignIn({ account, hostId: host.id, sessionId, autoOpen: false });
   const state = accounts.data;
+  const checksOff = usage.data?.checksOff === true;
   const enabled = state?.integration.enabled ?? false;
   const installed = providers.filter((option) => state?.providers[option.value].available ?? true);
   const toggleIntegration = () => action.run(() => integration({ enabled: !enabled }));
@@ -190,7 +191,7 @@ export function AccountsSurface(props: AccountsProps) {
           {enabled ? <InlineAction theme={theme} disabled={action.isPending} onPress={toggleIntegration}>Disable</InlineAction> : null}
         </View> : <Text style={muted(theme)}>{accounts.isPending ? "Loading…" : "Data unavailable"}</Text>}
       </View>
-      <IconButton theme={theme} icon="RefreshCw" label="Refresh all limits" disabled={action.isPending} onPress={() => action.run(() => refresh({}))} />
+      <IconButton theme={theme} icon="RefreshCw" label="Refresh all limits" disabled={action.isPending || checksOff} onPress={() => action.run(() => refresh({}))} />
       <Button theme={theme} variant="primary" disabled={action.isPending || (!adding && !installed.length)} onPress={() => setAdding(adding ? null : installed[0]?.value ?? null)}>{adding ? "Close" : "Add"}</Button>
     </View>
     {state && !enabled ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -198,6 +199,7 @@ export function AccountsSurface(props: AccountsProps) {
       <Button theme={theme} disabled={action.isPending} onPress={toggleIntegration}>Enable</Button>
     </View> : null}
     {state?.integration.error ? <Notice theme={theme} tone="danger">{state.integration.error}</Notice> : null}
+    {checksOff ? <Notice theme={theme} tone="warning">Check usage is off in this host's settings: limits stop updating, and a used-up account gets no switch offer.</Notice> : null}
     {runtimeError ? <Notice theme={theme} tone="danger">{runtimeError}</Notice> : null}
     {action.error ? <Notice theme={theme} tone="danger">{errorMessage(action.error)}</Notice> : null}
     {accounts.error ? <Notice theme={theme} tone="danger">Could not refresh accounts: {errorMessage(accounts.error)}</Notice> : null}
@@ -225,7 +227,7 @@ export function AccountsSurface(props: AccountsProps) {
             <View style={{ flex: 1, minWidth: 200 }}><Notice theme={theme} tone="warning">Account switching is off for {cliName[provider]}: its agents use the system CLI.</Notice></View>
             <Button theme={theme} disabled={action.isPending} onPress={enableIntegration}>Enable</Button>
           </View> : null}
-        {group.map((account) => <AccountCard key={account.id} {...props} account={account} state={state} snapshot={usage.data?.accounts.find((item) => item.accountId === account.id)} now={now} onStarted={onStarted} onResume={onResume} />)}
+        {group.map((account) => <AccountCard key={account.id} {...props} account={account} state={state} snapshot={usage.data?.accounts.find((item) => item.accountId === account.id)} checksOff={checksOff} now={now} onStarted={onStarted} onResume={onResume} />)}
         {!group.length && status.available ? <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           <Text style={muted(theme)}>No accounts.</Text>
           <InlineAction theme={theme} onPress={() => setAdding(provider)}>Add</InlineAction>

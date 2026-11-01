@@ -1,11 +1,73 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, stat, rm } from "node:fs/promises";
+import { mkdtemp, readFile, stat, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createUsageService, UsageError, type QuotaAccount } from "../server/usage/index";
+import { createUsageService, UsageError, usageChecksEnabled, type QuotaAccount } from "../server/usage/index";
 
 const account: QuotaAccount = { id: "a", provider: "codex", home: "/isolated/a", command: ["codex"], env: {}, identityKey: "identity-a", generation: 1 };
 const result = { identityKey: "identity-a", plan: "plus", windows: [{ id: "codex:primary", label: "Codex", usedPercent: 0, windowDurationMins: 300, resetsAt: "2026-09-16T00:00:00.000Z" }] };
+
+describe("the host's Check usage setting", () => {
+  it("reads as off only for an explicit false", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "usage-setting-"));
+    const config = join(dir, "config.json");
+    await expect(usageChecksEnabled(config)).resolves.toBe(true);
+    await writeFile(config, "not json");
+    await expect(usageChecksEnabled(config)).resolves.toBe(true);
+    await writeFile(config, JSON.stringify({ daemon: { listen: "127.0.0.1:6767" } }));
+    await expect(usageChecksEnabled(config)).resolves.toBe(true);
+    await writeFile(config, JSON.stringify({ daemon: { usage: { enabled: true } } }));
+    await expect(usageChecksEnabled(config)).resolves.toBe(true);
+    await writeFile(config, JSON.stringify({ daemon: { usage: { enabled: false } } }));
+    await expect(usageChecksEnabled(config)).resolves.toBe(false);
+    await rm(dir, { recursive: true, force: true });
+  });
+  it("makes no provider request while it is off, keeps the last reading, and resumes when it is on again", async () => {
+    let enabled = true, now = 0;
+    const fetchUsage = vi.fn(async () => result);
+    const service = createUsageService({ getAccounts: async () => [account], fetchUsage, now: () => now, checksEnabled: async () => enabled });
+    await service.refresh();
+    expect(fetchUsage).toHaveBeenCalledTimes(1);
+    enabled = false;
+    now = 3_600_000;
+    await expect(service.checksEnabled()).resolves.toBe(false);
+    expect((await service.refresh())[0]).toMatchObject({ status: "ok", windows: result.windows });
+    expect((await service.refresh("a"))[0]).toMatchObject({ status: "ok" });
+    await service.list({ visible: true });
+    service.start();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(fetchUsage).toHaveBeenCalledTimes(1);
+    enabled = true;
+    await service.refresh();
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+    await service.close();
+  });
+  it("starts no queued request once it is off: only the two already running finish", async () => {
+    let enabled = true;
+    const fetched: string[] = [], finish: (() => void)[] = [];
+    const accounts = ["a", "b", "c"].map(id => ({ ...account, id, identityKey: `identity-${id}` }));
+    const service = createUsageService({
+      getAccounts: async () => accounts,
+      checksEnabled: async () => enabled,
+      fetchUsage: requested => new Promise(resolve => { fetched.push(requested.id); finish.push(() => resolve({ ...result, identityKey: requested.identityKey })); }),
+    });
+    const round = service.refresh();
+    await vi.waitFor(() => expect(fetched).toHaveLength(2));
+    enabled = false;
+    for (const done of finish) done();
+    const snapshots = await round;
+    expect(fetched).toEqual(["a", "b"]);
+    expect(snapshots.map(snapshot => snapshot.status)).toEqual(["ok", "ok", "unavailable"]);
+    await service.close();
+  });
+  it("counts a setting that cannot be read as on, as a host without the setting is", async () => {
+    const fetchUsage = vi.fn(async () => result);
+    const service = createUsageService({ getAccounts: async () => [account], fetchUsage, checksEnabled: async () => { throw new Error("unreadable"); } });
+    await service.refresh();
+    expect(fetchUsage).toHaveBeenCalledTimes(1);
+    await service.close();
+  });
+});
 
 describe("usage service", () => {
   it("preserves successful quota data as stale after a transient error", async () => {

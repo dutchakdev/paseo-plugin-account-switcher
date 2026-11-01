@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-Account Switcher is an independent plugin for Paseo 0.11.x through 0.14.x, including beta releases after 0.11.0. It uses public plugin and provider APIs; no Paseo core patch is required. The development SDK is pinned to 0.11.4, the oldest supported release, so typechecking shows the plugin uses only the 0.11 API. The screen API and the usage source are 0.11 APIs, so every supported release has them. The plugin still checks for them at runtime, falling back to the older surface API or skipping the usage source; on a supported host these checks are defensive and change nothing.
+Account Switcher is an independent plugin for Paseo 0.11.0 and newer, including beta releases after 0.11.0. It uses public plugin and provider APIs; no Paseo core patch is required. The development SDK is pinned to 0.11.4, the oldest supported release, so typechecking shows the plugin uses only the 0.11 API. The screen API and the usage source are 0.11 APIs, so every supported release has them. The plugin still checks for them at runtime, falling back to the older surface API or skipping the usage source; on a supported host these checks are defensive and change nothing.
 
 ```mermaid
 flowchart LR
@@ -84,7 +84,7 @@ The choice and each applied switch are recorded as `account-note` plugin timelin
 
 Each limit window carries a `scope` from its parser: `account` for windows that stop every request (Claude `five_hour` and `seven_day`, Codex's main `rateLimits` bucket), `model` for a model's own limits, `spend` for extra paid usage. Exhausted means an account-scope window at 100% whose known reset time has not passed, which still holds for a stale reading because use within a window only grows until it resets; or a fresh Codex reading with `ordinaryUsageAllowed: false`. The plan's model list counts only from a fresh reading, and only for a model that at least one account lists. Room is the percent left in the tightest account-scope window still in effect. Only signed-in accounts without a sign-in in progress are spares. Its binding starts unconfirmed until startup is observed. Existing agents keep their bindings. Archived agents retain theirs for resume; cleanup of deleted agents requires a complete, successful agent listing.
 
-The controller runs `paseo agent reload` with the CLI named in `PASEO_CLI`, or with `paseo` from PATH when that is unset or cannot start, and removes the variables Paseo removes before it starts an outside command. A failed reload's exit code and stderr go to `console.error`; only the refusal reaches the chat.
+From Paseo 0.14 the controller reloads through the SDK's `agents.ref(id).reload()`, which sends the same request as the CLI. On older hosts it runs `paseo agent reload` with the CLI named in `PASEO_CLI`, or with `paseo` from PATH when that is unset or cannot start, and removes the variables Paseo removes before it starts an outside command. A failed reload's exit code and stderr go to `console.error`; only the refusal reaches the chat.
 
 Native reload preserves the native session ID, but does not offer an atomic idle-and-reload operation. Concurrent messages from another client remain a race that callers must avoid. Real switching, compaction, child sessions, and rewind require live acceptance beyond synthetic tests.
 
@@ -99,6 +99,10 @@ Paseo's built-in usage sources find an agent's login from that session's launch 
 `server/session-env.ts` (`profileEnv`) gives the `agent.session_open` hook the same variable the launcher uses. For an agent whose binding names a managed account (`launchAccountId`, else `currentAccountId`) of the request's provider, with integration enabled for that provider, it returns `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set to the account's home. The system account, an agent without a binding, and a provider without integration get nothing, because there the CLI runs on the login Paseo already reads. The value is derived on every session open, so a switch, which reloads the agent, moves it with the binding. A failed registry read is logged and costs only this hint. The hook still removes the private model hint.
 
 A managed home links the shared directories to the source home, so other reads of the variable by Paseo see the same settings and sessions.
+
+### The host's Check usage setting
+
+Paseo 0.15 adds a host setting that turns usage checks off, stored as `daemon.usage.enabled` in `config.json`. Paseo's own gate covers its usage requests but not this plugin's collector, so the collector reads the same value before each round and manual refresh. While it is off, the plugin requests nothing, keeps what it already read, and looks at no turn for failover, because an old reading is no proof that an account ran out. Only an explicit `false` counts, so a host without the setting stays on.
 
 ### Usage source
 

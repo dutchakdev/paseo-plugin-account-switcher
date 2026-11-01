@@ -1,6 +1,6 @@
 # Verification
 
-Last checked: **2026-10-31**. These results describe observed checks, not a guarantee
+Last checked: **2026-11-01**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
 
 ## Automated checks
@@ -54,6 +54,18 @@ texts. Rebuilding from a different working directory produced identical output.
 The GitHub Actions workflow is configured for Node 22 on macOS and Linux.
 `actionlint` passed locally. A hosted Actions run remains separate from these
 local and SSH-based results.
+
+## Paseo 0.15 compatibility — 2026-11-01
+
+- The manifest now accepts `>=0.11.0`. Paseo **0.15.0-beta.1**'s own `assertPluginCompatibility` refused the previous range on the daemon and in the app, for 0.15.0-beta.1 and 0.15.0, and admits the new one. The SDK stays pinned at 0.11.4.
+- With the SDK swapped to 0.15.0-beta.1 in a scratch copy, typecheck and all tests passed.
+- On macOS, an isolated **0.15.0-beta.1** daemon with a temp home ran this plugin, machine-status, mermaid and secure-input from source, with a stand-in `codex` and no provider account:
+  - A switch applied through the SDK reload in about 250 ms, and the next CLI ran with the new account's `CODEX_HOME`. A cold `paseo --version` alone takes about 300 ms.
+  - A stand-in that could not answer the reload: Apply refused, the cause went to the plugin log, and the next CLI ran on the old account.
+  - A daemon restart in the middle of a turn: Paseo resumed the agent with `Resume working.`, its CLI ran on the switched account, and the binding stayed `ready`.
+  - **Check usage** turned off through `patchDaemonConfig`: Paseo wrote `daemon.usage.enabled: false` to `config.json`, `usage.list` reported `checksOff`, and turning it on again needed no reload.
+- The same run on an isolated **0.14.0** daemon passed the switch through the SDK reload. The CLI path, which Paseo before 0.14 still needs, is covered by automated tests only.
+- Not checked live: the Accounts notice in an app, a real provider's limit request while the setting is off (automated tests assert no request), and Paseo before 0.14.
 
 ## An agent whose creation fails — 2026-10-31
 

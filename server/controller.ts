@@ -11,7 +11,7 @@ import { prepareProfile } from "./profiles";
 import { accountCommand, accountEnvironment, launchLogin, probeAccount, removeAccountCredentials } from "./auth";
 import { installIntegration, restoreIntegration, writeLaunchers, prepareRuntime, reconcileIntegration } from "./integration";
 import { SwitchRefusal, SwitchService } from "./switching";
-import { createUsageService, readCredentialVersion, type AccountReadOptions, type QuotaAccount } from "./usage";
+import { createUsageService, readCredentialVersion, usageChecksEnabled, type AccountReadOptions, type QuotaAccount } from "./usage";
 import { renewExpiredClaudeToken } from "./usage/claude";
 import { LoginSessions, type LoginDependencies } from "./login";
 import { receiptProcessRuns } from "./process-identity";
@@ -57,7 +57,7 @@ export class AccountController {
    // A crash during reload must not leave an unconfirmed account marked applied.
    await this.store.change(state=>{for(const b of state.bindings){if(b.status==="switching"){b.currentAccountId=null;b.launchToken=null;b.status="error";b.error="The account switch was interrupted. Account not confirmed; apply the account again.";}}});
   });
-  this.usage=createUsageService({getAccounts:input=>this.quotaAccounts(input),cachePath:join(root,"usage-cache.json")});
+  this.usage=createUsageService({getAccounts:input=>this.quotaAccounts(input),cachePath:join(root,"usage-cache.json"),checksEnabled:()=>usageChecksEnabled(join(dirname(root),"config.json"))});
   void this.ready.then(()=>{if(!this.disposed)this.usage.start();}).catch(()=>{});
  }
  async ensureRuntime(paseo:PaseoApi){
@@ -364,25 +364,34 @@ export class AccountController {
    return{provider:a.provider,busy:a.status==="running"||a.status==="initializing"||!!a.activeTurn||a.pendingPermissions.length>0,archived:!!a.archivedAt};
   },reload:async(id)=>{
    await requireIntegration();
-   const config=JSON.parse(await readFile(join(dirname(this.store.root),"config.json"),"utf8"));
-   const listen=config.daemon?.listen;
-   if(typeof listen!=="string"||!listen)throw new SwitchRefusal("Could not identify the daemon for reload.");
-   const host=listen.replace(/^0\.0\.0\.0:/,"127.0.0.1:");
-   const cli=paseoCli();let command=cli.command;
-   const reload=(file:string)=>execFileAsync(file,["agent","reload",id,"--json","--host",host],{timeout:120_000,maxBuffer:1024*1024,env:cli.env});
-   try{
-    // A CLI that could not start reloaded nothing, so `paseo` on PATH can still try. One that ran and failed is not repeated.
-    await reload(command).catch(error=>{const code=(error as {code?:unknown}).code;if(command==="paseo"||(code!=="ENOENT"&&code!=="EACCES"))throw error;command="paseo";return reload(command);});
-   }
-   catch(error){
-    // The chat gets the refusal; the cause, which can name local paths, goes only to the plugin log.
-    const {code,signal,stderr}=error as {code?:unknown;signal?:unknown;stderr?:unknown};
-    console.error(`Native reload of agent ${id} with ${command} failed (${signal?`signal ${signal}`:`code ${code}`}): ${stripVTControlCharacters(String(stderr??"")).replace(/\s+/g," ").trim().slice(0,500)||"no output"}`);
-    throw new SwitchRefusal("The native agent reload failed. Check the agent status and try again.");
+   const agent=paseo.agents.ref(id) as {reload?:()=>Promise<unknown>;commands?:()=>Promise<unknown>};
+   // From Paseo 0.14 the SDK sends the request the CLI would, with no process to start and no daemon address to find.
+   if(agent.reload){
+    try{await agent.reload();}
+    catch(error){
+     console.error(`Native reload of agent ${id} failed: ${stripVTControlCharacters(error instanceof Error?error.message:String(error)).replace(/\s+/g," ").trim().slice(0,500)||"no output"}`);
+     throw new SwitchRefusal("The native agent reload failed. Check the agent status and try again.");
+    }
+   }else{
+    const config=JSON.parse(await readFile(join(dirname(this.store.root),"config.json"),"utf8"));
+    const listen=config.daemon?.listen;
+    if(typeof listen!=="string"||!listen)throw new SwitchRefusal("Could not identify the daemon for reload.");
+    const host=listen.replace(/^0\.0\.0\.0:/,"127.0.0.1:");
+    const cli=paseoCli();let command=cli.command;
+    const reload=(file:string)=>execFileAsync(file,["agent","reload",id,"--json","--host",host],{timeout:120_000,maxBuffer:1024*1024,env:cli.env});
+    try{
+     // A CLI that could not start reloaded nothing, so `paseo` on PATH can still try. One that ran and failed is not repeated.
+     await reload(command).catch(error=>{const code=(error as {code?:unknown}).code;if(command==="paseo"||(code!=="ENOENT"&&code!=="EACCES"))throw error;command="paseo";return reload(command);});
+    }
+    catch(error){
+     // The chat gets the refusal; the cause, which can name local paths, goes only to the plugin log.
+     const {code,signal,stderr}=error as {code?:unknown;signal?:unknown;stderr?:unknown};
+     console.error(`Native reload of agent ${id} with ${command} failed (${signal?`signal ${signal}`:`code ${code}`}): ${stripVTControlCharacters(String(stderr??"")).replace(/\s+/g," ").trim().slice(0,500)||"no output"}`);
+     throw new SwitchRefusal("The native agent reload failed. Check the agent status and try again.");
+    }
    }
    // Paseo 0.11 reloads into an idle session and spawns the CLI on first use; listing
    // commands starts it so the launcher can confirm the account. Older hosts already started it.
-   const agent=paseo.agents.ref(id) as {commands?:()=>Promise<unknown>};
    if(agent.commands)await agent.commands().catch(()=>{/* The receipt check reports a failed start. */});
   }});
   this.switches.set(paseo,service);return service;

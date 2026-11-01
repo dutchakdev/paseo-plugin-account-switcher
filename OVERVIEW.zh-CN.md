@@ -18,7 +18,7 @@ Account Switcher 让你在 Paseo 中使用多个 Claude 和 ChatGPT/Codex 订阅
 
 ## 设置
 
-- macOS 或 Linux 守护进程上的 Paseo 0.11 至 0.14，以及 Node.js 22.12 或更高版本。
+- macOS 或 Linux 守护进程上的 Paseo 0.11 或更高版本，以及 Node.js 22.12 或更高版本。
 - 守护进程上需要官方 Paseo CLI，以及 Claude Code 或 Codex 至少其一。缺少 CLI 的提供商会显示为不可用；安装后重新加载插件，并在该提供商的分区中选择 **Enable**。
 - 每个账号都需要 Claude 或 ChatGPT 订阅。不支持 API 密钥。添加账号时，会在 Paseo 中运行官方 CLI 登录流程。
 
@@ -28,7 +28,7 @@ Account Switcher 让你在 Paseo 中使用多个 Claude 和 ChatGPT/Codex 订阅
 - Claude 限制来自使用该账号访问令牌向 `api.anthropic.com` 发出的请求。当该令牌过期时（例如账号闲置），插件会以该账号运行 `claude -p /usage --no-session-persistence`，由官方 CLI 续期令牌，每 10 分钟最多一次。该命令不发送模型消息，也不保存会话。Codex 限制和套餐的模型列表来自官方 `codex app-server`，它会向 OpenAI 查询，并可能刷新账号令牌。限制检查不会发送任何模型消息。
 - 为在 Paseo 的 Usage 视图中列出账号，插件会以来源名称 Account Switcher 上报它已收集的限制数据，不会产生新的提供商请求。对于使用托管账号的智能体，插件会把该账号的配置文件目录加入智能体的会话环境，使 Paseo 的用量弹窗读取正确的账号。
 - 插件发给智能体的唯一消息是 **Continue.**，仅在通过限制行完成切换之后，或在失败回合之后自动切换完成时发送。
-- 限制每 5 分钟刷新一次；Accounts 或切换器打开时每分钟刷新一次。缺失的值显示为无数据，刷新失败时可能保留上次的值并标记为过期。
+- 限制每 5 分钟刷新一次；Accounts 或切换器打开时每分钟刷新一次。缺失的值显示为无数据，刷新失败时可能保留上次的值并标记为过期。在主机设置中关闭 **Check usage** 时（Paseo 0.15 及更新版本），插件不发起额度请求，额度用尽时也不提供切换；Accounts 页面会说明这一点。
 - 移除托管账号会删除其配置文件和已保存的登录信息，在 macOS 上包括 Claude 账号的钥匙串项。共享的会话历史会保留。
 
 ## 限制

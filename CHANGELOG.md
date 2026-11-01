@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The plugin follows the host's **Check usage** setting (Paseo 0.15 and newer). While it is off, the plugin makes no limit requests, does not offer a switch when a limit runs out, and Accounts says so.
+
+### Changed
+
+- Accepts every Paseo from 0.11.0 on, so a new Paseo release no longer needs a plugin release. Before, Paseo 0.15 refused to load the plugin.
+- On Paseo 0.14 and newer, a switch reloads the agent through Paseo's SDK instead of starting the `paseo` CLI. A stale `PASEO_CLI` or a `paseo` that does not start can no longer fail a switch there.
+
 ## 0.9.0 - 2026-10-31
 
 ### Added

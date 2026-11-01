@@ -10,7 +10,7 @@ function AccountsSidebarRow({ currentScreen, openScreen }: PluginSidebarItemProp
   return createElement(SidebarRow, { icon: ICON, active: currentScreen?.screenId === SCREEN_ID, onPress: () => openScreen({ screenId: SCREEN_ID }) });
 }
 
-// The screen API replaced surfaces in Paseo 0.11; both names exist through 0.14. Ask the app what it has, not its version.
+// The screen API replaced surfaces in Paseo 0.11; the old names are deprecated. Ask the app what it has, not its version.
 // Each registration is decided on its own, so an app that has only half of the new API still gets both pieces.
 export function registerAccountsScreen(client: PluginClientContext, Component: ComponentType<PluginScreenProps>): () => void {
   const removeScreen = typeof client.addScreen === "function"

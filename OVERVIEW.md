@@ -16,7 +16,7 @@ Limits cover every window the provider reports, such as 5-hour and weekly use, w
 
 ## Setup
 
-- Paseo 0.11 to 0.14 on a macOS or Linux daemon, with Node.js 22.12 or newer.
+- Paseo 0.11 or newer on a macOS or Linux daemon, with Node.js 22.12 or newer.
 - The official Paseo CLI and at least one of Claude Code or Codex on the daemon. A provider without its CLI shows as unavailable; after you install it, reload the plugin and select **Enable** in that provider's section.
 - A Claude or ChatGPT subscription for each account. API keys are not supported. Adding an account runs the official CLI sign-in from Paseo.
 
@@ -26,7 +26,7 @@ Limits cover every window the provider reports, such as 5-hour and weekly use, w
 - Claude limits come from a request to `api.anthropic.com` with the account's access token. When that token has expired, for example on an idle account, the plugin runs `claude -p /usage --no-session-persistence` under the account so the official CLI renews it, at most every 10 minutes. The command sends no model message and saves no session. Codex limits and the plan's model list come from the official `codex app-server`, which asks OpenAI and may refresh the account's token. Limit checks send no model messages.
 - To list accounts in Paseo's Usage view, the plugin reports the limits it has already collected under the source name Account Switcher, without new provider requests. For an agent on a managed account, it adds that account's profile directory to the agent's session environment so Paseo's usage popover reads the right account.
 - The only message the plugin sends to an agent is **Continue.**, after a switch made from the limit row, or by automatic switching after a failed turn.
-- Limits refresh every 5 minutes, and every minute while Accounts or the switcher is open. Missing values show as no data, and a failed refresh can keep the last values, marked stale.
+- Limits refresh every 5 minutes, and every minute while Accounts or the switcher is open. Missing values show as no data, and a failed refresh can keep the last values, marked stale. With **Check usage** off in the host's settings (Paseo 0.15 and newer), the plugin makes no limit requests and offers no switch when a limit runs out; Accounts says so.
 - Removing a managed account deletes its profile and stored sign-in, including a Claude account's Keychain item on macOS. Shared session history stays.
 
 ## Limitations
