@@ -37,3 +37,9 @@ Limits cover every window the provider reports, such as 5-hour and weekly use, w
 - Plans differ in the models they offer: after a switch to a plan without the agent's model, its next message fails. For Codex, the switcher compares the agent's model with the models the account's plan offers and warns before **Apply**. Claude does not report its models, so there is no such check for Claude.
 - Codex's **In browser** sign-in must finish on the daemon's computer. From another device, use **Device code**.
 - Providers can change their limit formats. Values the plugin cannot read show as no data.
+
+## Other plugins by dutchakdev
+
+- [Machine Status](https://paseo.sh/plugins/dutchakdev/machine-status): load, memory, disk, the ports and processes your agents started, and Docker on the daemon's Mac, with dev-cache cleanup and confirmed process stops.
+- [Mermaid](https://paseo.sh/plugins/dutchakdev/mermaid): draws Mermaid flowcharts and sequence diagrams from chat messages and `.mmd` files, on desktop and mobile.
+- [secure-input](https://paseo.sh/plugins/dutchakdev/secure-input): agents ask you for secrets through a form, and each value lands in a short-lived file the agent moves without reading it.
