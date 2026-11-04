@@ -52,7 +52,7 @@ export class AccountController {
  constructor(root=join(process.env.PASEO_HOME||join(homedir(),".paseo"),"account-switcher"),loginDependencies:Omit<LoginDependencies,"finish">={}) {
   this.store=new AccountStore(root);
   this.logins=new LoginSessions({...loginDependencies,finish:(id,token,successful)=>this.completeBackgroundLogin(id,token,successful)});
-  this.ready=this.store.initialize({claude:resolve(process.env.CLAUDE_CONFIG_DIR||join(homedir(),".claude")),codex:resolve(process.env.CODEX_HOME||join(homedir(),".codex"))}).then(async()=>{
+  this.ready=this.store.initialize({claude:resolve(process.env.CLAUDE_CONFIG_DIR||join(homedir(),".claude")),codex:resolve(process.env.CODEX_HOME||join(homedir(),".codex")),cursor:resolve(process.env.XDG_CONFIG_HOME||join(homedir(),".config"))}).then(async()=>{
    await writeLaunchers(this.store);
    // A crash during reload must not leave an unconfirmed account marked applied.
    await this.store.change(state=>{for(const b of state.bindings){if(b.status==="switching"){b.currentAccountId=null;b.launchToken=null;b.status="error";b.error="The account switch was interrupted. Account not confirmed; apply the account again.";}}});
@@ -203,7 +203,7 @@ export class AccountController {
   const target=initial.accounts.find(account=>account.id===input.verifyAccountId);
   if(target&&initial.available[target.provider]&&initial.commands[target.provider]&&!target.loginToken)await this.checkAccount(target.id,true).catch(()=>{this.credentialProofs.delete(target.id);});
   const state=await this.store.read();
-  return state.accounts.filter(a=>state.available[a.provider]&&state.commands[a.provider]&&!a.loginToken).map(account=>this.toQuotaAccount(account,state));
+  return state.accounts.filter(a=>a.provider!=="cursor"&&state.available[a.provider]&&state.commands[a.provider]&&!a.loginToken).map(account=>this.toQuotaAccount(account,state));
  }
  private toQuotaAccount(account:StoredAccount,state:Registry):QuotaAccount {
    const env=accountEnvironment(account,state);
@@ -251,7 +251,7 @@ export class AccountController {
    if(account.loginToken)throw new Error("Sign-in is already open. Continue or cancel the current attempt.");
    if(account.source!=="managed")throw new Error("Add a separate account for isolated sign-in.");
    return await this.logins.start(account,registry,this.store.root,token,mode,async()=>{
-    await this.store.change(state=>{const current=accountFrom(state,id);if(current.loginToken)throw new Error("Sign-in is already open. Continue or cancel the current attempt.");if(state.bindings.some(b=>b.currentAccountId===id||b.launchAccountId===id||b.currentAccountId===null&&b.pendingAccountId===id))throw new Error("Switch agents away from this account before signing in again.");current.loginToken=token;current.login={sessionId:token,mode:account.provider==="claude"?"browser":mode};});
+    await this.store.change(state=>{const current=accountFrom(state,id);if(current.loginToken)throw new Error("Sign-in is already open. Continue or cancel the current attempt.");if(state.bindings.some(b=>b.currentAccountId===id||b.launchAccountId===id||b.currentAccountId===null&&b.pendingAccountId===id))throw new Error("Switch agents away from this account before signing in again.");current.loginToken=token;current.login={sessionId:token,mode:account.provider!=="codex"?"browser":mode};});
     this.usage.invalidate(id);
     await this.checks.get(id)?.catch(()=>{});
    });

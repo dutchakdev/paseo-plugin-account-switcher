@@ -9,9 +9,9 @@ import { atomicWrite } from "./files";
 import { LAUNCHER_SOURCE } from "./launcher-artifact";
 import { assertSubscriptionEnvironment } from "./profiles";
 
-const providers = ["claude", "codex"] as const;
+const providers = ["claude", "codex", "cursor"] as const;
 const COMMAND_DRIFT = "Provider commands changed outside the plugin. Enable integration again to apply accounts.";
-export const NO_PROVIDER_CLI = "Provider CLI not found. Install Claude Code or Codex, or configure its command in Paseo.";
+export const NO_PROVIDER_CLI = "Provider CLI not found. Install Claude Code, Codex, or Cursor, or configure its command in Paseo.";
 export const launcherPath = (root: string, provider: Provider): string => join(root, "bin", `${provider}-launcher`);
 export async function writeLaunchers(store: AccountStore): Promise<void> {
   for (const provider of providers) await atomicWrite(launcherPath(store.root, provider), LAUNCHER_SOURCE, 0o700);
@@ -92,10 +92,11 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
   const { config } = await paseo.config.get(); const registry = await store.read();
   const wrappers = providers.map(provider => launcherPath(store.root, provider));
   const commands = { ...registry.commands }, originals = { ...registry.originalCommands }, sourceHomes = { ...registry.sourceHomes };
-  const sourceEnvironment: typeof registry.sourceEnvironment = { claude: {}, codex: {} };
-  const available = { claude: false, codex: false };
+  const sourceEnvironment: typeof registry.sourceEnvironment = { claude: {}, codex: {}, cursor: {} };
+  const available = { claude: false, codex: false, cursor: false };
   const ownership: Provider[] = [];
   for (const provider of providers) {
+    if (provider === "cursor" && (process.platform !== "linux" || !config.providers.cursor || config.providers.cursor.enabled === false)) continue;
     const current = commandArray(config.providers[provider]?.command);
     if (owned(current, launcherPath(store.root, provider))) {
       ownership.push(provider);
@@ -106,7 +107,7 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
       available[provider] = resolved !== null;
     } else {
       originals[provider] = current;
-      commands[provider] = await resolveCommand(current ?? [provider], wrappers);
+      commands[provider] = await resolveCommand(current ?? (provider === "cursor" ? ["cursor-agent", "acp"] : [provider]), wrappers);
       available[provider] = commands[provider] !== null;
     }
     if (!available[provider]) { Object.assign(sourceEnvironment[provider], registry.sourceEnvironment[provider]); continue; }
@@ -114,7 +115,7 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
     const configured = environment && typeof environment === "object" ? environment as Record<string, unknown> : {};
     assertSubscriptionEnvironment(provider, process.env);
     assertSubscriptionEnvironment(provider, configured);
-    const keys = provider === "claude" ? ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] as const : ["CODEX_HOME"] as const;
+    const keys = provider === "claude" ? ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] as const : provider === "cursor" ? ["XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR"] as const : ["CODEX_HOME"] as const;
     for (const key of keys) {
       const value = configured[key] ?? process.env[key];
       // An explicitly empty override selects the default credential namespace.
@@ -127,10 +128,12 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
         (sourceEnvironment[provider] as Record<string, string>)[key] = value;
       }
     }
-    const value = provider === "claude" ? sourceEnvironment.claude.CLAUDE_CONFIG_DIR : sourceEnvironment.codex.CODEX_HOME;
-    sourceHomes[provider] = typeof value === "string" && isAbsolute(value) ? resolve(value) : join(homedir(), provider === "claude" ? ".claude" : ".codex");
+    // Pin one shared session/settings home for probes, logins and every account launch.
+    if (provider === "cursor") sourceEnvironment.cursor.CURSOR_CONFIG_DIR ||= join(homedir(),".cursor");
+    const value = provider === "claude" ? sourceEnvironment.claude.CLAUDE_CONFIG_DIR : provider === "cursor" ? sourceEnvironment.cursor.XDG_CONFIG_HOME : sourceEnvironment.codex.CODEX_HOME;
+    sourceHomes[provider] = typeof value === "string" && isAbsolute(value) ? resolve(value) : join(homedir(), provider === "claude" ? ".claude" : provider === "cursor" ? ".config" : ".codex");
   }
-  if (!available.claude && !available.codex) throw new Error(NO_PROVIDER_CLI);
+  if (!available.claude && !available.codex && !available.cursor) throw new Error(NO_PROVIDER_CLI);
   await writeLaunchers(store);
   // The wrapper must see its originals before the daemon can run provider discovery.
   await store.change(state => {

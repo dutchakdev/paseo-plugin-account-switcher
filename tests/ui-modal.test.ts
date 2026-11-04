@@ -16,7 +16,7 @@ async function harness() {
       list: async () => ({ entries: [agent("first"), agent("second")].map(agent => ({ agent })), pageInfo: { hasMore: false, nextCursor: null } }),
     } },
     rpc: vi.fn(async (contract: { name: string }) => contract.name === "accounts.list"
-      ? { accounts: [], bindings: [], defaults: { claude: null, codex: null }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } } }
+      ? { accounts: [], bindings: [], defaults: { claude: null, codex: null, cursor: null }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true }, cursor: { available: false, integrated: false } } }
       : { accounts: [] }),
     addComposerPill: (contribution: PluginComposerPillContribution) => { buttons.push(contribution); return { update: vi.fn(), remove: vi.fn() }; },
   } as unknown as PluginClientContext;

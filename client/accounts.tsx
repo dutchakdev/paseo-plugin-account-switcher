@@ -14,7 +14,7 @@ export type AccountsProps = PluginSurfaceProps & { onChanged(): void; runtimeErr
 type SignInActions = { onStarted(account: Account, session: LoginSession): void; onResume(account: Account, sessionId: string): void };
 
 const loginModes = [{ value: "device", label: "Device code" }, { value: "browser", label: "In browser" }] as const;
-const providers = [{ value: "claude", label: providerName.claude }, { value: "codex", label: providerName.codex }] as const;
+const providers = [{ value: "claude", label: providerName.claude }, { value: "codex", label: providerName.codex }, { value: "cursor", label: providerName.cursor }] as const;
 type ProviderOption = (typeof providers)[number];
 
 // A system account stands for a CLI the daemon does not have. Managed sign-ins stay listed so they can be removed.
@@ -81,7 +81,7 @@ function AccountCard({ account, state, snapshot, checksOff, now, theme, layout, 
       {"sessionId" in loginSession ? "Finish signing in in your browser. Status and limits will update automatically." : "A sign-in from an older version is still open. Cancel it, then sign in again to use the browser flow."}
     </Notice> : null}
     {panel === "menu" ? <View style={{ ...row, paddingTop: 2 }}>
-      <Button theme={theme} variant="ghost" disabled={busy || checksOff || Boolean(loginSession)} onPress={() => action.run(() => refresh({ accountId: account.id }))}>Refresh limits</Button>
+      {account.provider !== "cursor" ? <Button theme={theme} variant="ghost" disabled={busy || checksOff || Boolean(loginSession)} onPress={() => action.run(() => refresh({ accountId: account.id }))}>Refresh limits</Button> : null}
       <Button theme={theme} variant="ghost" disabled={busy} onPress={() => action.run(async () => {
         const result = await check({ accountId: account.id });
         setNotice(result.authStatus === "ready" ? "Sign-in confirmed. You can now select this account for agents." : "Sign-in is not confirmed yet. Finish signing in in your browser, then check again.");
@@ -110,8 +110,8 @@ function AccountCard({ account, state, snapshot, checksOff, now, theme, layout, 
     </View> : null}
     {notice ? <Notice theme={theme}>{notice}</Notice> : null}
     {action.error ? <Notice theme={theme} tone="danger">{errorMessage(action.error)}</Notice> : null}
-    <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact={layout.compact}
-      onRefresh={loginSession || checksOff ? undefined : () => action.run(() => refresh({ accountId: account.id }))} refreshing={busy} />
+    {account.provider === "cursor" ? <Text style={muted(theme)}>Cursor usage limits are unavailable.</Text> : <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact={layout.compact}
+      onRefresh={loginSession || checksOff ? undefined : () => action.run(() => refresh({ accountId: account.id }))} refreshing={busy} />}
   </View>;
 }
 
@@ -150,7 +150,7 @@ function AddAccountForm({ theme, host, onChanged, initialProvider, options, onCl
 
 /** Whether a chat whose turn ran out of its account's limit offers a switch or makes it. `run` is the screen's action lock. */
 export function AutoFailoverSetting({ theme, provider, enabled, disabled, run }: ThemeProps & {
-  provider: Provider; enabled: boolean; disabled: boolean; run(action: () => Promise<unknown>): void;
+  provider: Exclude<Provider, "cursor">; enabled: boolean; disabled: boolean; run(action: () => Promise<unknown>): void;
 }) {
   const save = useRpc(setAutoFailover);
   return <View style={{ gap: 4 }}>
@@ -205,7 +205,7 @@ export function AccountsSurface(props: AccountsProps) {
     {accounts.error ? <Notice theme={theme} tone="danger">Could not refresh accounts: {errorMessage(accounts.error)}</Notice> : null}
     {usage.error ? <Notice theme={theme} tone="danger">Could not refresh limits: {errorMessage(usage.error)}</Notice> : null}
     {adding ? <AddAccountForm key={adding} {...props} initialProvider={adding} options={installed} onStarted={onStarted} onClose={() => setAdding(null)} /> : null}
-    {state ? (["claude", "codex"] as const).map((provider) => {
+    {state ? (["claude", "codex", "cursor"] as const).map((provider) => {
       const status = state.providers[provider];
       const group = state.accounts.filter((account) => account.provider === provider && listed(account, state));
       return <View key={provider} style={{ gap: 8 }}>
@@ -213,7 +213,7 @@ export function AccountsSurface(props: AccountsProps) {
           <Text accessibilityRole="header" style={heading(theme)}>{providerName[provider]}</Text>
           <Text style={muted(theme)}>{group.length}</Text>
         </View>
-        {state.defaults[provider] && group.length > 1 ? <View style={{ gap: 4 }}>
+        {provider !== "cursor" && state.defaults[provider] && group.length > 1 ? <View style={{ gap: 4 }}>
           <Segmented theme={theme} label={`When the ${providerName[provider]} default would fail`} value={state.fallback[provider] ? "fallback" : "default"}
             disabled={action.isPending} onChange={(value) => action.run(() => fallback({ provider, enabled: value === "fallback" }))}
             options={[{ value: "fallback", label: "Start on another account" }, { value: "default", label: "Always use the default" }]} />
@@ -221,7 +221,7 @@ export function AccountsSurface(props: AccountsProps) {
             ? "A new agent starts on another signed-in account when the latest limits show the default would fail."
             : "New agents always start on the default, even when its limits are used up."}</Text>
         </View> : null}
-        {group.length > 1 ? <AutoFailoverSetting theme={theme} provider={provider} enabled={state.autoFailover[provider]} disabled={action.isPending} run={action.run} /> : null}
+        {provider !== "cursor" && group.length > 1 ? <AutoFailoverSetting theme={theme} provider={provider} enabled={state.autoFailover[provider]} disabled={action.isPending} run={action.run} /> : null}
         {!status.available ? <Notice theme={theme}>{missingCli(provider)}</Notice>
           : enabled && !status.integrated ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <View style={{ flex: 1, minWidth: 200 }}><Notice theme={theme} tone="warning">Account switching is off for {cliName[provider]}: its agents use the system CLI.</Notice></View>

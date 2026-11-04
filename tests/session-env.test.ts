@@ -2,23 +2,26 @@ import { describe, expect, it } from "vitest";
 import { profileEnv } from "../server/session-env";
 import type { Registry } from "../server/store";
 
-type Account = { id: string; provider: "claude" | "codex"; source: "managed" | "system"; home: string };
-type Binding = { agentId: string; provider: "claude" | "codex"; currentAccountId: string | null; launchAccountId: string | null };
+type Account = { id: string; provider: "claude" | "codex" | "cursor"; source: "managed" | "system"; home: string };
+type Binding = { agentId: string; provider: "claude" | "codex" | "cursor"; currentAccountId: string | null; launchAccountId: string | null };
 const accounts: Account[] = [
+  { id: "system-cursor", provider: "cursor", source: "system", home: "/home/me/.config" },
+  { id: "work-cursor", provider: "cursor", source: "managed", home: "/root/accounts/work-cursor/cursor" },
   { id: "system-claude", provider: "claude", source: "system", home: "/home/me/.claude" },
   { id: "system-codex", provider: "codex", source: "system", home: "/home/me/.codex" },
   { id: "work-claude", provider: "claude", source: "managed", home: "/root/accounts/work-claude/claude" },
   { id: "other-claude", provider: "claude", source: "managed", home: "/root/accounts/other-claude/claude" },
   { id: "work-codex", provider: "codex", source: "managed", home: "/root/accounts/work-codex/codex" },
 ];
-function registry(bindings: Binding[], integration: { enabled: boolean; providers: ("claude" | "codex")[] } = { enabled: true, providers: ["claude", "codex"] }) {
+function registry(bindings: Binding[], integration: { enabled: boolean; providers: ("claude" | "codex" | "cursor")[] } = { enabled: true, providers: ["claude", "codex", "cursor"] }) {
   return { accounts, bindings, integration: { ...integration, error: null } } as unknown as Registry;
 }
-const bind = (provider: "claude" | "codex", currentAccountId: string | null, launchAccountId: string | null = currentAccountId): Binding =>
+const bind = (provider: "claude" | "codex" | "cursor", currentAccountId: string | null, launchAccountId: string | null = currentAccountId): Binding =>
   ({ agentId: "agent-1", provider, currentAccountId, launchAccountId });
 
 describe("the profile a session's environment names", () => {
   it.each([
+    ["a managed Cursor account", "cursor", bind("cursor", "work-cursor"), { XDG_CONFIG_HOME: "/root/accounts/work-cursor/cursor" }],
     ["a managed Claude account", "claude", bind("claude", "work-claude"), { CLAUDE_CONFIG_DIR: "/root/accounts/work-claude/claude" }],
     ["a managed Codex account", "codex", bind("codex", "work-codex"), { CODEX_HOME: "/root/accounts/work-codex/codex" }],
     ["an agent still launching, which has no current account yet", "claude", bind("claude", null, "work-claude"), { CLAUDE_CONFIG_DIR: "/root/accounts/work-claude/claude" }],
@@ -29,6 +32,7 @@ describe("the profile a session's environment names", () => {
   });
 
   it.each([
+    ["the system Cursor account", "cursor", [bind("cursor", "system-cursor")]],
     ["the system account, which is the CLI's own login", "claude", [bind("claude", "system-claude")]],
     ["an agent without a binding", "claude", []],
     ["another agent's binding", "claude", [{ ...bind("claude", "work-claude"), agentId: "agent-2" }]],
@@ -42,7 +46,7 @@ describe("the profile a session's environment names", () => {
   });
 
   it("names nothing while integration is disabled, because the launcher is not in the chain", () => {
-    expect(profileEnv(registry([bind("claude", "work-claude")], { enabled: false, providers: ["claude", "codex"] }), "agent-1", "claude")).toEqual({});
+    expect(profileEnv(registry([bind("claude", "work-claude")], { enabled: false, providers: ["claude", "codex", "cursor"] }), "agent-1", "claude")).toEqual({});
   });
   it("names nothing for a provider the integration does not own", () => {
     const bindings = [bind("claude", "work-claude"), { ...bind("codex", "work-codex"), agentId: "agent-2" }];

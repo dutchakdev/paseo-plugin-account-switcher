@@ -159,7 +159,7 @@ it.each(["before preflight","during preflight"] as const)("blocks an account wit
 });
 
 it("keeps a default binding unconfirmed until a matching receipt and a successful native start",async()=>{
- const {store,target}=await fixture();await store.change(registry=>{registry.defaults.codex=target.id;registry.commands={claude:[process.execPath],codex:[process.execPath]};});
+ const {store,target}=await fixture();await store.change(registry=>{registry.defaults.codex=target.id;registry.commands = { cursor: null,claude:[process.execPath],codex:[process.execPath]};});
  const service=makeService(store);await service.bindNewAgent("default/agent","codex");
  const before=(await store.read()).bindings[0];
  expect(before).toMatchObject({currentAccountId:null,pendingAccountId:null,launchAccountId:target.id});expect(before.launchToken).toBeTruthy();

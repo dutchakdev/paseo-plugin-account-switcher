@@ -151,7 +151,7 @@ describe("persistent login isolation", () => {
 
   it("quarantines accounts with an open login from quota collection", async () => {
     const { controller, account } = await fixture();
-    await controller.store.change(registry => { registry.commands = { claude: ["fixture-cli"], codex: ["fixture-cli"] }; });
+    await controller.store.change(registry => { registry.commands = { cursor: null, claude: ["fixture-cli"], codex: ["fixture-cli"] }; });
     await controller.login(paseo, account.id);
     const listed = await controller.quotaAccounts();
     expect(listed.map(item => item.id)).toEqual(["system-claude", "system-codex"]);
@@ -170,7 +170,7 @@ describe("persistent login isolation", () => {
 describe("expired Claude tokens", () => {
   it("lets the CLI renew before identity verification for limits, at most once per interval", async () => {
     const { controller } = await fixture();
-    await controller.store.change(registry => { registry.commands = { claude: ["fixture-cli"], codex: ["fixture-cli"] }; });
+    await controller.store.change(registry => { registry.commands = { claude: ["fixture-cli"], codex: ["fixture-cli"], cursor: null }; });
     mocks.renewExpiredClaudeToken.mockResolvedValue(true);
     await controller.quotaAccounts({ verifyAccountId: "system-claude" });
     await controller.quotaAccounts({ verifyAccountId: "system-claude" });
@@ -183,7 +183,7 @@ describe("expired Claude tokens", () => {
 
   it("checks again on the next verification when the token was still valid", async () => {
     const { controller } = await fixture();
-    await controller.store.change(registry => { registry.commands = { claude: ["fixture-cli"], codex: ["fixture-cli"] }; });
+    await controller.store.change(registry => { registry.commands = { claude: ["fixture-cli"], codex: ["fixture-cli"], cursor: null }; });
     await controller.quotaAccounts({ verifyAccountId: "system-claude" });
     await controller.quotaAccounts({ verifyAccountId: "system-claude" });
     expect(mocks.renewExpiredClaudeToken).toHaveBeenCalledTimes(2);
@@ -193,7 +193,7 @@ describe("expired Claude tokens", () => {
 describe("provider without a CLI", () => {
   it("refuses new accounts and leaves its accounts out of limits monitoring", async () => {
     const { controller, account } = await fixture();
-    await controller.store.change(r => { r.commands = { claude: ["fixture-cli"], codex: ["fixture-cli"] }; r.available.codex = false; });
+    await controller.store.change(r => { r.commands = { cursor: null, claude: ["fixture-cli"], codex: ["fixture-cli"] }; r.available.codex = false; });
     await expect(controller.add("codex", "Another")).rejects.toThrow("Codex CLI was not found");
     expect((await controller.store.read()).accounts.filter(row => row.provider === "codex").map(row => row.id)).toEqual(["system-codex", account.id]);
     expect((await controller.quotaAccounts()).map(row => row.id)).toEqual(["system-claude"]);

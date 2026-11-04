@@ -12,10 +12,11 @@ export function accountCommand(registry: Registry, provider: Provider): string[]
   if (!registry.available[provider]) throw new Error(missingCli(provider));
   const command = registry.commands[provider];
   if (!command?.length || !command[0]) throw new Error("The provider CLI is not configured. Enable account integration.");
-  return [...command];
+  return provider === "cursor" && command.at(-1) === "acp" ? command.slice(0,-1) : [...command];
 }
 
 export function accountEnvironment(account: StoredAccount, registry: Registry, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (account.provider === "cursor") return buildAccountEnv("cursor",account.home,{...base,...registry.sourceEnvironment.cursor});
   if (account.source === "managed") return buildAccountEnv(account.provider, account.home, base);
   const env = { ...base };
   if (account.provider === "codex") env.CODEX_HOME = account.home;
@@ -74,7 +75,7 @@ export async function probeAccount(account: StoredAccount, registry: Registry): 
       await assertManagedCommand(account.provider, accountCommand(registry, account.provider).slice(1));
       await prepareProfile({ provider: account.provider, home: account.home, sourceHome: registry.sourceHomes[account.provider], sourceEnvironment: registry.sourceEnvironment[account.provider] });
     }
-    const result = await status(accountCommand(registry, account.provider), account.provider === "claude" ? ["auth", "status", "--json"] : ["login", "status"], accountEnvironment(account, registry));
+    const result = await status(accountCommand(registry, account.provider), account.provider === "claude" ? ["auth", "status", "--json"] : account.provider === "cursor" ? ["status", "--format", "json"] : ["login", "status"], accountEnvironment(account, registry));
     if (result.failed) return empty("error");
     if (result.code !== 0) return empty("needs_auth");
     if (account.provider === "claude") {
@@ -84,6 +85,14 @@ export async function probeAccount(account: StoredAccount, registry: Registry): 
       if (value.authMethod !== "claude.ai" && value.authMethod !== "oauth_token") return empty("unknown");
       const email = string(value.email), orgId = string(value.orgId);
       return { identityKey: identity("claude", [email, orgId]), email, plan: string(value.subscriptionType), authStatus: "ready" };
+    }
+    if (account.provider === "cursor") {
+      const value = JSON.parse(result.stdout.trim());
+      if (value.isAuthenticated !== true || value.status !== "authenticated") return empty("needs_auth");
+      const email = string(value.userInfo?.email);
+      const userId = typeof value.userInfo?.userId === "number" ? String(value.userInfo.userId) : string(value.userInfo?.userId);
+      if (!email || !userId) return empty("unknown");
+      return {identityKey:identity("cursor",[userId]),email,plan:string(value.plan),authStatus:"ready"};
     }
     // `login status` intentionally has no JSON mode. Metadata comes only from this profile.
     if (!/logged in using chatgpt/i.test(`${result.stdout}\n${result.stderr}`)) return empty("unknown");
@@ -130,7 +139,7 @@ export async function launchLogin(paseo: PaseoApi, store: AccountStore, accountI
   if (!workspaceId) workspaceId = await findLoginWorkspace(paseo, cwd);
   if (!workspaceId) {
     const workspace = await paseo.workspaces.open({ cwd });
-    await workspace.setTitle(`Sign in · ${account.provider === "codex" ? "Codex" : "Claude"} · ${account.label}`);
+    await workspace.setTitle(`Sign in · ${account.provider === "codex" ? "Codex" : account.provider === "cursor" ? "Cursor" : "Claude"} · ${account.label}`);
     workspaceId = workspace.id;
   }
   const args = ["--account-switcher-login", account.id];

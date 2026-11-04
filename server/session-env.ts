@@ -9,7 +9,7 @@ import type { Registry } from "./store";
  * which Paseo already reads by default, so it adds nothing.
  */
 export function profileEnv(registry: Registry, agentId: string, provider: string): Record<string, string> {
-  if (provider !== "claude" && provider !== "codex") return {};
+  if (provider !== "claude" && provider !== "codex" && provider !== "cursor") return {};
   // Without the launcher in the chain the CLI runs on the system login, whatever the binding says.
   if (!registry.integration.enabled || !registry.integration.providers.includes(provider)) return {};
   const binding = registry.bindings.find(candidate => candidate.agentId === agentId && candidate.provider === provider);
@@ -17,5 +17,5 @@ export function profileEnv(registry: Registry, agentId: string, provider: string
   const accountId = binding?.launchAccountId ?? binding?.currentAccountId;
   const account = accountId ? registry.accounts.find(candidate => candidate.id === accountId && candidate.provider === provider) : undefined;
   if (account?.source !== "managed") return {};
-  return provider === "claude" ? { CLAUDE_CONFIG_DIR: account.home } : { CODEX_HOME: account.home };
+  return provider === "claude" ? { CLAUDE_CONFIG_DIR: account.home } : provider === "cursor" ? { XDG_CONFIG_HOME: account.home } : { CODEX_HOME: account.home };
 }

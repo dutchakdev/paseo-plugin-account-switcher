@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
 import { readRegistry } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
 import { atomicWrite } from "./files";
@@ -13,12 +15,12 @@ async function finishLogin(exitCode: number): Promise<void> {
 
 async function main(): Promise<void> {
   const executable = resolve(process.argv[1]), root = dirname(dirname(executable));
-  const provider = basename(executable) === "claude-launcher" ? "claude" : basename(executable) === "codex-launcher" ? "codex" : null;
+  const provider = basename(executable) === "claude-launcher" ? "claude" : basename(executable) === "codex-launcher" ? "codex" : basename(executable) === "cursor-launcher" ? "cursor" : null;
   if (!provider) throw new LauncherError("Unknown account launcher.");
   let registry;
   try { registry = await readRegistry(root); } catch { throw new LauncherError("Account registry is missing or corrupt; launch refused."); }
   const command = registry.commands[provider];
-  if (!command?.[0] || !isAbsolute(command[0]) || [join(root, "bin", "claude-launcher"), join(root, "bin", "codex-launcher")].includes(resolve(command[0]))) throw new LauncherError("Original provider command is unavailable; launch refused.");
+  if (!command?.[0] || !isAbsolute(command[0]) || [join(root, "bin", "claude-launcher"), join(root, "bin", "codex-launcher"), join(root, "bin", "cursor-launcher")].includes(resolve(command[0]))) throw new LauncherError("Original provider command is unavailable; launch refused.");
   let args = process.argv.slice(2), env = { ...process.env };
   const login = args[0] === "--account-switcher-login", agentId = env.PASEO_AGENT_ID;
   const binding = agentId ? registry.bindings.find(candidate => candidate.agentId === agentId && candidate.provider === provider) : undefined;
@@ -46,10 +48,30 @@ async function main(): Promise<void> {
       try { current = await readRegistry(root); } catch { throw new LauncherError("Account registry is missing or corrupt; launch refused."); }
       if (!current.bindings.some(candidate => candidate.agentId === agentId)) throw new LauncherError("The account reservation was released while this agent started; launch refused.");
     }
-    env = buildAccountEnv(provider, account.home, env);
   }
-  if (login) args = provider === "claude" ? ["auth", "login", "--claudeai"] : args[2] === "--browser" ? ["login"] : ["login", "--device-auth"];
-  const child = spawn(command[0], [...command.slice(1), ...args], { env, stdio: "inherit" });
+  if (provider === "cursor") Object.assign(env,registry.sourceEnvironment.cursor);
+  if (account?.source === "managed" || provider === "cursor") env = buildAccountEnv(provider,account?.home ?? registry.sourceHomes[provider],env);
+  if (login) args = provider === "cursor" ? ["login"] : provider === "claude" ? ["auth", "login", "--claudeai"] : args[2] === "--browser" ? ["login"] : ["login", "--device-auth"];
+  const prefix = login && provider === "cursor" && command.at(-1) === "acp" ? command.slice(1,-1) : command.slice(1);
+  const cursorAcp = provider === "cursor" && !login;
+  const child = spawn(command[0], [...prefix, ...args], { env, stdio: cursorAcp ? ["inherit", "pipe", "inherit"] : "inherit" });
+  if (cursorAcp && child.stdout) {
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    Readable.from((async function* () {
+      for await (let line of lines) {
+        try {
+          const message = JSON.parse(line);
+          // Prefer the config-option model picker: Cursor's legacy set_model drops
+          // the updated thinking options, leaving Paseo with the previous model's.
+          if (message.result?.models && message.result.configOptions?.some((option: { type?: string; category?: string }) => option.type === "select" && option.category === "model")) {
+            delete message.result.models;
+            line = JSON.stringify(message);
+          }
+        } catch { /* Forward other ACP lines unchanged. */ }
+        yield line + "\n";
+      }
+    })()).pipe(process.stdout);
+  }
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const forward = new Map<NodeJS.Signals, () => void>();
   for (const signal of signals) { const handler = () => { child.kill(signal); }; forward.set(signal, handler); process.on(signal, handler); }

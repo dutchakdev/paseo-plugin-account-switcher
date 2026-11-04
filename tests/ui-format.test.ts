@@ -30,19 +30,22 @@ describe("quota presentation", () => {
 });
 
 describe("manual switch readiness", () => {
-  it("requires observed idle state with no active turn or permission", () => {
+  it.each(["idle", "error", "closed"])("allows switching a %s session only without active work or permissions", (status) => {
+    expect(idleForSwitch({ status, pendingPermissions: [] })).toBe(true);
+    expect(idleForSwitch({ status, activeTurn: { turnId: "turn" }, pendingPermissions: [] })).toBe(false);
+    expect(idleForSwitch({ status, pendingPermissions: [{}] })).toBe(false);
+  });
+  it("blocks switching until the session is observed to have stopped", () => {
     expect(idleForSwitch(null)).toBe(false);
-    expect(idleForSwitch({ status: "idle", pendingPermissions: [] })).toBe(true);
-    expect(idleForSwitch({ status: "idle", activeTurn: { turnId: "turn" }, pendingPermissions: [] })).toBe(false);
-    expect(idleForSwitch({ status: "idle", pendingPermissions: [{}] })).toBe(false);
-    for (const status of ["initializing", "running", "error", "closed"]) {
+    expect(idleForSwitch(undefined)).toBe(false);
+    for (const status of ["initializing", "running", "unknown"]) {
       expect(idleForSwitch({ status, pendingPermissions: [] })).toBe(false);
     }
   });
   it("distinguishes an unbound system session from a failed switch with unknown actual identity", () => {
     const state: AccountState = {
       accounts: [{ id: "system-codex", provider: "codex", source: "system", label: "System Codex", authStatus: "ready", email: null, plan: null, createdAt: "2026-09-15" }],
-      bindings: [], defaults: { claude: null, codex: null }, fallback: { claude: true, codex: true }, autoFailover: { claude: false, codex: false }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
+      bindings: [], defaults: { claude: null, codex: null , cursor: null}, fallback: { claude: true, codex: true }, autoFailover: { claude: false, codex: false }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true }, cursor: { available: false, integrated: false } },
     };
     expect(currentAccount(state, "agent", "codex")?.id).toBe("system-codex");
     expect(currentAccountName(state, "agent", "codex")).toBe("System Codex");
