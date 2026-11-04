@@ -52,7 +52,7 @@ export class AccountController {
  constructor(root=join(process.env.PASEO_HOME||join(homedir(),".paseo"),"account-switcher"),loginDependencies:Omit<LoginDependencies,"finish">={}) {
   this.store=new AccountStore(root);
   this.logins=new LoginSessions({...loginDependencies,finish:(id,token,successful)=>this.completeBackgroundLogin(id,token,successful)});
-  this.ready=this.store.initialize({claude:resolve(process.env.CLAUDE_CONFIG_DIR||join(homedir(),".claude")),codex:resolve(process.env.CODEX_HOME||join(homedir(),".codex")),cursor:resolve(process.env.XDG_CONFIG_HOME||join(homedir(),".config"))}).then(async()=>{
+  this.ready=this.store.initialize({claude:resolve(process.env.CLAUDE_CONFIG_DIR||join(homedir(),".claude")),codex:resolve(process.env.CODEX_HOME||join(homedir(),".codex")),cursor:process.platform === "darwin" ? homedir() : resolve(process.env.XDG_CONFIG_HOME||join(homedir(),".config"))}).then(async()=>{
    await writeLaunchers(this.store);
    // A crash during reload must not leave an unconfirmed account marked applied.
    await this.store.change(state=>{for(const b of state.bindings){if(b.status==="switching"){b.currentAccountId=null;b.launchToken=null;b.status="error";b.error="The account switch was interrupted. Account not confirmed; apply the account again.";}}});
@@ -208,7 +208,7 @@ export class AccountController {
  private toQuotaAccount(account:StoredAccount,state:Registry):QuotaAccount {
    const env=accountEnvironment(account,state);
    const credentialHome=account.provider==="claude"?(env.CLAUDE_SECURESTORAGE_CONFIG_DIR??env.CLAUDE_CONFIG_DIR)||join(env.HOME||homedir(),".claude"):account.home;
-   const quota:QuotaAccount={id:account.id,provider:account.provider,home:credentialHome,identityKey:account.identityKey,generation:account.generation,command:accountCommand(state,account.provider),env,requireIdentityVerification:account.identityKey!==null};
+   const quota:QuotaAccount={id:account.id,provider:account.provider,source:account.source,home:credentialHome,identityKey:account.identityKey,generation:account.generation,command:accountCommand(state,account.provider),env,requireIdentityVerification:account.identityKey!==null};
    quota.credentialVersion=this.credentialVersions.get(account.id);
    const proof=this.credentialProofs.get(account.id);
    if(account.authStatus==="ready"&&proof?.identityKey===account.identityKey&&proof?.generation===account.generation)quota.identityCredentialVersion=proof.version;

@@ -8,6 +8,7 @@ import type { AccountStore, Registry } from "./store";
 import { atomicWrite } from "./files";
 import { LAUNCHER_SOURCE } from "./launcher-artifact";
 import { assertSubscriptionEnvironment } from "./profiles";
+import { CURSOR_MAC_PRELOAD } from "./cursor-macos";
 
 const providers = ["claude", "codex", "cursor"] as const;
 const COMMAND_DRIFT = "Provider commands changed outside the plugin. Enable integration again to apply accounts.";
@@ -15,6 +16,7 @@ export const NO_PROVIDER_CLI = "Provider CLI not found. Install Claude Code, Cod
 export const launcherPath = (root: string, provider: Provider): string => join(root, "bin", `${provider}-launcher`);
 export async function writeLaunchers(store: AccountStore): Promise<void> {
   for (const provider of providers) await atomicWrite(launcherPath(store.root, provider), LAUNCHER_SOURCE, 0o700);
+  if (process.platform === "darwin") await atomicWrite(join(store.root, "bin", "cursor-macos-preload.cjs"), CURSOR_MAC_PRELOAD);
 }
 
 function commandArray(value: unknown): string[] | null {
@@ -96,7 +98,7 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
   const available = { claude: false, codex: false, cursor: false };
   const ownership: Provider[] = [];
   for (const provider of providers) {
-    if (provider === "cursor" && (process.platform !== "linux" || !config.providers.cursor || config.providers.cursor.enabled === false)) continue;
+    if (provider === "cursor" && ((process.platform !== "linux" && process.platform !== "darwin") || !config.providers.cursor || config.providers.cursor.enabled === false)) continue;
     const current = commandArray(config.providers[provider]?.command);
     if (owned(current, launcherPath(store.root, provider))) {
       ownership.push(provider);
@@ -130,8 +132,12 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
     }
     // Pin one shared session/settings home for probes, logins and every account launch.
     if (provider === "cursor") sourceEnvironment.cursor.CURSOR_CONFIG_DIR ||= join(homedir(),".cursor");
+    if (provider === "cursor") {
+      const store = configured.AGENT_CLI_CREDENTIAL_STORE ?? process.env.AGENT_CLI_CREDENTIAL_STORE;
+      if (typeof store === "string") sourceEnvironment.cursor.AGENT_CLI_CREDENTIAL_STORE = store;
+    }
     const value = provider === "claude" ? sourceEnvironment.claude.CLAUDE_CONFIG_DIR : provider === "cursor" ? sourceEnvironment.cursor.XDG_CONFIG_HOME : sourceEnvironment.codex.CODEX_HOME;
-    sourceHomes[provider] = typeof value === "string" && isAbsolute(value) ? resolve(value) : join(homedir(), provider === "claude" ? ".claude" : provider === "cursor" ? ".config" : ".codex");
+    sourceHomes[provider] = provider === "cursor" && process.platform === "darwin" ? homedir() : typeof value === "string" && isAbsolute(value) ? resolve(value) : join(homedir(), provider === "claude" ? ".claude" : provider === "cursor" ? ".config" : ".codex");
   }
   if (!available.claude && !available.codex && !available.cursor) throw new Error(NO_PROVIDER_CLI);
   await writeLaunchers(store);

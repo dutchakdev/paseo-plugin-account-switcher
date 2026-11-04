@@ -1,11 +1,31 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
 import { UsageError, type CollectedUsage, type QuotaAccount } from "./index";
-import { retryAfter } from "./claude";
+import { retryAfter, type ClaudeDependencies } from "./claude";
 import { credentialHash } from "./credential-hash";
 import { object, string } from "./parsers";
 
 // Cursor's built-in Paseo usage source uses the same endpoint and fields.
+export async function readCursorCredentials(account: QuotaAccount, dependencies: ClaudeDependencies = {}, signal?: AbortSignal): Promise<{raw:string;source:string}> {
+  const macSystem = (dependencies.platform ?? process.platform) === "darwin" && account.source === "system";
+  if (macSystem && account.env.AGENT_CLI_CREDENTIAL_STORE !== "file") {
+    if (account.env.AGENT_CLI_CREDENTIAL_STORE === "memory") throw new UsageError("needs_auth", "missing_credentials");
+    const read = dependencies.readKeychain ?? ((target, signal) => new Promise<string | null>((resolve, reject) => {
+      execFile("/usr/bin/security", ["find-generic-password", "-a", target.account, "-s", target.service, "-w"], {timeout: 3000, maxBuffer: 256 * 1024, signal}, (error, stdout) => {
+        if (!error) resolve(stdout.trim() || null);
+        else if ((error as {code?: number | string}).code === 44) resolve(null);
+        else reject(new UsageError("unavailable", "keychain_unavailable"));
+      });
+    }));
+    const token = await read({account:"cursor-user",service:"cursor-access-token"}, signal);
+    if (!token) throw new UsageError("needs_auth", "missing_credentials");
+    return {source:"keychain",raw:JSON.stringify({accessToken:token})};
+  }
+  const path = macSystem ? join(account.home, ".cursor", "auth.json") : join(account.home, "cursor", "auth.json");
+  return {source:"file",raw:await (dependencies.readFile ?? (path => readFile(path, "utf8")))(path)};
+}
+
 const number = (value: unknown): number | null => {
   if (typeof value !== "number" && !(typeof value === "string" && value.trim())) return null;
   const n = Number(value);
@@ -24,8 +44,8 @@ export async function collectCursorUsage(account: QuotaAccount, signal?: AbortSi
   signal?.addEventListener("abort", abort, { once: true });
   const timeout = setTimeout(abort, 15_000); timeout.unref();
   try {
-    const raw = await readFile(join(account.home, "cursor", "auth.json"), "utf8");
-    if (account.requireIdentityVerification && credentialHash("file", raw) !== account.identityCredentialVersion) throw new UsageError("unavailable", "credentials_changed");
+    const {raw,source} = await readCursorCredentials(account, {}, signal);
+    if (account.requireIdentityVerification && credentialHash(source, raw) !== account.identityCredentialVersion) throw new UsageError("unavailable", "credentials_changed");
     let auth: unknown;
     try { auth = JSON.parse(raw); } catch { throw new UsageError("needs_auth", "invalid_credentials"); }
     const token = string(object(auth)?.accessToken);

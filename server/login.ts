@@ -4,6 +4,7 @@ import type { Provider, LoginSession } from "../shared/contracts";
 import type { Registry, StoredAccount } from "./store";
 import { accountCommand, accountEnvironment } from "./auth";
 import { assertManagedCommand, prepareProfile } from "./profiles";
+import { cursorMacMarker, verifyCursorMacCommand } from "./cursor-macos";
 import { createLoginProcess, type CreateLoginProcess, type LoginProcess } from "./login-process";
 
 type Entry = {
@@ -49,8 +50,13 @@ export class LoginSessions {
       userCode: null, canSubmitCode: false, error: null, expiresAt: new Date(Date.now() + duration).toISOString() },
       buffer: "", nativeSuccess: false, stopped: false, pendingCompletions: [] };
     this.entries.set(account.id, entry);
-    const env = { ...accountEnvironment(account, registry), BROWSER: "/usr/bin/true", NO_COLOR: "1", TERM: "dumb", NO_OPEN_BROWSER: "1" };
+    const env: NodeJS.ProcessEnv = { ...accountEnvironment(account, registry), BROWSER: "/usr/bin/true", NO_COLOR: "1", TERM: "dumb", NO_OPEN_BROWSER: "1" };
+    let marker: Awaited<ReturnType<typeof cursorMacMarker>> | undefined;
     try {
+      if (account.provider === "cursor" && process.platform === "darwin") {
+        await verifyCursorMacCommand(command, env);
+        marker = await cursorMacMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
+      }
       entry.process = (this.dependencies.createProcess ?? createLoginProcess)({ command,
         args: account.provider === "claude" ? ["auth", "login", "--claudeai"] : account.provider === "cursor" ? ["login"] : ["app-server", "--stdio"], env, cwd,
         receiptPath: join(root, "logins", `${account.id}.json`), loginToken: sessionId,
@@ -59,6 +65,7 @@ export class LoginSessions {
           entry.stopped = true; clearTimeout(entry.timer); clearDetails(entry.value); entry.buffer = ""; entry.pendingCompletions = [];
           const successful = code === 0 && (account.provider !== "codex" || entry.nativeSuccess);
           entry.finishing = (async () => {
+            await marker?.cleanup();
             if (receiptWritten) {
               entry.value.status = "verifying";
               const ready = await this.dependencies.finish(account.id, sessionId, successful);
@@ -84,6 +91,7 @@ export class LoginSessions {
     } catch {
       clearTimeout(entry.timer);
       if (entry.process) await entry.process.stop();
+      await marker?.cleanup();
       this.entries.delete(account.id);
       throw new Error("Could not start account sign-in. Check the provider CLI and try again.");
     }

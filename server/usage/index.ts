@@ -7,7 +7,7 @@ import { collectCodexUsage } from "./codex";
 import { collectCursorUsage } from "./cursor";
 import { object } from "./parsers";
 
-export type QuotaAccount = { id: string; provider: Provider; home: string; command: string[]; env: NodeJS.ProcessEnv; identityKey: string | null; generation: number; credentialVersion?: string; identityCredentialVersion?: string; requireIdentityVerification?: boolean };
+export type QuotaAccount = { id: string; provider: Provider; source?: "system" | "managed"; home: string; command: string[]; env: NodeJS.ProcessEnv; identityKey: string | null; generation: number; credentialVersion?: string; identityCredentialVersion?: string; requireIdentityVerification?: boolean };
 export { readCredentialVersion } from "./credentials";
 export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[]; models?: string[] | null; usageAllowed?: boolean | null };
 export type FetchUsage = (account: QuotaAccount, signal?: AbortSignal) => Promise<CollectedUsage>;

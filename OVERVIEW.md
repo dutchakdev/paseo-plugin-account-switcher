@@ -31,6 +31,7 @@ Limits cover every window the provider reports, such as 5-hour and weekly use, w
 
 ## Limitations
 
+- On macOS, managed Cursor accounts rely on the CLI's internal Node file APIs to isolate credentials. The implementation has been tested with simulated macOS behavior, but not on a Mac. Usage is shown in Accounts; Paseo's own per-chat Cursor usage popover is unavailable for these accounts.
 - Apply reloads the agent through Paseo, which has no lock against a message sent from another client at the same moment. That message can be interrupted.
 - Paseo does not say why a turn failed, and reports a Claude turn stopped by its limit as completed, so the limit row appears only when the plugin's own limit readings, taken again after the turn, show the account is used up. A limit the provider does not report gets no row, and neither does an agent whose account the plugin cannot confirm. Nothing is offered while account switching is off for the provider.
 - Paseo's Usage view can show one managed account twice: after you open the usage details of an agent on that account, Paseo's own Claude or Codex card for the login can appear next to the Account Switcher card. The plugin cannot merge cards of different sources.

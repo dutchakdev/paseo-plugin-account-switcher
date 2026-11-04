@@ -20,7 +20,7 @@ export const RegistrySchema = z.object({
  // Whether a chat whose turn ran out of its account's limit switches by itself instead of offering a switch; off unless chosen.
  autoFailover: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:false,codex:false}),
  sourceHomes: z.object({claude:z.string(),codex:z.string(),cursor:z.string().default(join(homedir(),".config"))}),
- sourceEnvironment: z.object({claude:z.object({CLAUDE_CONFIG_DIR:z.string().optional(),CLAUDE_SECURESTORAGE_CONFIG_DIR:z.string().optional()}),codex:z.object({CODEX_HOME:z.string().optional()}),cursor:z.object({XDG_CONFIG_HOME:z.string().optional(),CURSOR_CONFIG_DIR:z.string().optional()}).default({})}).default({claude:{},codex:{},cursor:{}}),
+ sourceEnvironment: z.object({claude:z.object({CLAUDE_CONFIG_DIR:z.string().optional(),CLAUDE_SECURESTORAGE_CONFIG_DIR:z.string().optional()}),codex:z.object({CODEX_HOME:z.string().optional()}),cursor:z.object({XDG_CONFIG_HOME:z.string().optional(),CURSOR_CONFIG_DIR:z.string().optional(),AGENT_CLI_CREDENTIAL_STORE:z.string().optional()}).default({})}).default({claude:{},codex:{},cursor:{}}),
  commands: CommandsSchema, originalCommands: CommandsSchema,
  // Whether discovery found each provider CLI. Registries written before this field assumed both.
  available: z.object({claude:z.boolean(),codex:z.boolean(),cursor:z.boolean().default(false)}).default({claude:true,codex:true,cursor:false}),

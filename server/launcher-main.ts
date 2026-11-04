@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import { readRegistry } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
 import { atomicWrite } from "./files";
+import { cursorMacMarker, verifyCursorMacCommand, waitCursorMacMarker } from "./cursor-macos";
 
 class LauncherError extends Error {}
 let loginCompletion: { path: string; loginToken: string } | undefined;
@@ -50,10 +51,16 @@ async function main(): Promise<void> {
     }
   }
   if (provider === "cursor") Object.assign(env,registry.sourceEnvironment.cursor);
-  if (account?.source === "managed" || provider === "cursor") env = buildAccountEnv(provider,account?.home ?? registry.sourceHomes[provider],env);
+  if (account?.source === "managed" || provider === "cursor" && process.platform !== "darwin") env = buildAccountEnv(provider,account?.home ?? registry.sourceHomes[provider],env);
   if (login) args = provider === "cursor" ? ["login"] : provider === "claude" ? ["auth", "login", "--claudeai"] : args[2] === "--browser" ? ["login"] : ["login", "--device-auth"];
   const prefix = login && provider === "cursor" && command.at(-1) === "acp" ? command.slice(1,-1) : command.slice(1);
   const cursorAcp = provider === "cursor" && !login;
+  let marker: Awaited<ReturnType<typeof cursorMacMarker>> | undefined;
+  if (provider === "cursor" && account?.source === "managed" && process.platform === "darwin") {
+    try { await verifyCursorMacCommand(command.at(-1) === "acp" ? command.slice(0,-1) : command, env); }
+    catch { throw new LauncherError("Cursor credential isolation could not be verified; launch refused."); }
+    marker = await cursorMacMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
+  }
   const child = spawn(command[0], [...prefix, ...args], { env, stdio: cursorAcp ? ["inherit", "pipe", "inherit"] : "inherit" });
   if (cursorAcp && child.stdout) {
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
@@ -79,16 +86,20 @@ async function main(): Promise<void> {
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit, reject) => {
     child.once("error", () => reject(new LauncherError("Could not start the configured provider CLI.")));
     child.once("spawn", () => {
-      if (!login && binding && account && agentId) {
-        receipt = atomicWrite(join(root, "receipts", `${encodeURIComponent(agentId)}.json`), JSON.stringify({ accountId: account.id, launchToken: binding.launchToken, pid: child.pid, at: new Date().toISOString() }));
+      if (marker || !login && binding && account && agentId) {
+        receipt = (async () => {
+          if (marker) await waitCursorMacMarker(marker.path, child.pid!);
+          if (!login && binding && account && agentId) await atomicWrite(join(root, "receipts", `${encodeURIComponent(agentId)}.json`), JSON.stringify({ accountId: account.id, launchToken: binding.launchToken, pid: child.pid, at: new Date().toISOString() }));
+        })();
         // A receipt failure cannot be treated as a successful identity switch.
         receipt.catch(() => { child.kill("SIGTERM"); });
       }
     });
     child.once("close", (code, signal) => resolveExit({ code, signal }));
   });
-  const result = await exited;
-  await receipt;
+  let result: Awaited<typeof exited>;
+  try { result = await exited; await receipt; }
+  finally { await marker?.cleanup(); }
   await finishLogin(result.code ?? 1);
   for (const [signal, handler] of forward) process.removeListener(signal, handler);
   if (login && provider === "codex" && result.code !== 0) {

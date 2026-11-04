@@ -17,5 +17,5 @@ export function profileEnv(registry: Registry, agentId: string, provider: string
   const accountId = binding?.launchAccountId ?? binding?.currentAccountId;
   const account = accountId ? registry.accounts.find(candidate => candidate.id === accountId && candidate.provider === provider) : undefined;
   if (account?.source !== "managed") return {};
-  return provider === "claude" ? { CLAUDE_CONFIG_DIR: account.home } : provider === "cursor" ? { XDG_CONFIG_HOME: account.home } : { CODEX_HOME: account.home };
+  return provider === "claude" ? { CLAUDE_CONFIG_DIR: account.home } : provider === "cursor" ? process.platform === "darwin" ? { AGENT_CLI_CREDENTIAL_STORE: "memory" } : { XDG_CONFIG_HOME: account.home } : { CODEX_HOME: account.home };
 }

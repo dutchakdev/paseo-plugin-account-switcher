@@ -183,12 +183,11 @@ it("binds a new Cursor chat before launch and switches A to B to A with distinct
   expect(reloaded).toEqual(["same-chat","same-chat"]);
 });
 
-it("blocks Cursor API-key overrides and refuses macOS account profiles",async()=>{
+it("blocks Cursor authentication overrides",async()=>{
   expect(()=>assertSubscriptionEnvironment("cursor",{CURSOR_API_KEY:"private"})).toThrow(/API key/);
   await expect(assertManagedCommand("cursor",["acp","--api-key=private"])).rejects.toThrow(/isolation/);
-  const platform=Object.getOwnPropertyDescriptor(process,"platform")!;
-  Object.defineProperty(process,"platform",{value:"darwin"});
-  try {expect(()=>buildAccountEnv("cursor","/tmp/profile",{})).toThrow(/only on Linux/);} finally {Object.defineProperty(process,"platform",platform);}
+  await expect(assertManagedCommand("cursor",["acp","--auth-token=private"])).rejects.toThrow(/isolation/);
+  expect(()=>assertSubscriptionEnvironment("cursor",{CURSOR_AUTH_TOKEN:"private"})).toThrow();
 });
 
 it("includes managed Cursor profiles in quota collection",async()=>{

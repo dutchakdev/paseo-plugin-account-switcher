@@ -7,6 +7,7 @@ import { missingCli, type Provider } from "../shared/contracts";
 import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
 import { launcherPath, writeLaunchers } from "./integration";
+import { cursorMacMarker, verifyCursorMacCommand, waitCursorMacMarker } from "./cursor-macos";
 
 export function accountCommand(registry: Registry, provider: Provider): string[] {
   if (!registry.available[provider]) throw new Error(missingCli(provider));
@@ -16,7 +17,10 @@ export function accountCommand(registry: Registry, provider: Provider): string[]
 }
 
 export function accountEnvironment(account: StoredAccount, registry: Registry, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  if (account.provider === "cursor") return buildAccountEnv("cursor",account.home,{...base,...registry.sourceEnvironment.cursor});
+  if (account.provider === "cursor") {
+    const env = {...base,...registry.sourceEnvironment.cursor};
+    return account.source === "system" && process.platform === "darwin" ? env : buildAccountEnv("cursor",account.home,env);
+  }
   if (account.source === "managed") return buildAccountEnv(account.provider, account.home, base);
   const env = { ...base };
   if (account.provider === "codex") env.CODEX_HOME = account.home;
@@ -52,9 +56,13 @@ const string = (value: unknown): string | null => typeof value === "string" && v
 const identity = (provider: Provider, fields: Array<string | null>): string | null => fields.some(Boolean)
   ? `${provider}:${createHash("sha256").update(JSON.stringify(fields)).digest("hex")}` : null;
 
-async function status(command: string[], args: string[], env: NodeJS.ProcessEnv): Promise<{ code: number | null; stdout: string; stderr: string; failed: boolean }> {
+async function status(command: string[], args: string[], env: NodeJS.ProcessEnv, marker?: string): Promise<{ code: number | null; stdout: string; stderr: string; failed: boolean }> {
   return new Promise(resolve => {
-    execFile(command[0], [...command.slice(1), ...args], { env, timeout: 20_000, maxBuffer: 256 * 1024, encoding: "utf8", windowsHide: true }, (error, stdout, stderr) => {
+    const child = execFile(command[0], [...command.slice(1), ...args], { env, timeout: 20_000, maxBuffer: 256 * 1024, encoding: "utf8", windowsHide: true }, async (error, stdout, stderr) => {
+      if (marker) {
+        try { if (!child.pid) throw new Error(); await waitCursorMacMarker(marker,child.pid); }
+        catch { return resolve({code:null,stdout:"",stderr:"",failed:true}); }
+      }
       const code = error ? typeof error.code === "number" ? error.code : null : 0;
       resolve({ code, stdout, stderr, failed: !!error && code === null });
     });
@@ -75,7 +83,15 @@ export async function probeAccount(account: StoredAccount, registry: Registry): 
       await assertManagedCommand(account.provider, accountCommand(registry, account.provider).slice(1));
       await prepareProfile({ provider: account.provider, home: account.home, sourceHome: registry.sourceHomes[account.provider], sourceEnvironment: registry.sourceEnvironment[account.provider] });
     }
-    const result = await status(accountCommand(registry, account.provider), account.provider === "claude" ? ["auth", "status", "--json"] : account.provider === "cursor" ? ["status", "--format", "json"] : ["login", "status"], accountEnvironment(account, registry));
+    const env = accountEnvironment(account, registry);
+    let marker: Awaited<ReturnType<typeof cursorMacMarker>> | undefined;
+    if (account.provider === "cursor" && account.source === "managed" && process.platform === "darwin") {
+      await verifyCursorMacCommand(accountCommand(registry,"cursor"), env);
+      marker = await cursorMacMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
+    }
+    let result: Awaited<ReturnType<typeof status>>;
+    try { result = await status(accountCommand(registry, account.provider), account.provider === "claude" ? ["auth", "status", "--json"] : account.provider === "cursor" ? ["status", "--format", "json"] : ["login", "status"], env, marker?.path); }
+    finally { await marker?.cleanup(); }
     if (result.failed) return empty("error");
     if (result.code !== 0) return empty("needs_auth");
     if (account.provider === "claude") {

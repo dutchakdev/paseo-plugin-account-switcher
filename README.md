@@ -29,6 +29,8 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 
 The interface is in English. Reset dates use the viewing device's local time zone. See [installation](docs/installation.md) for remote hosts and [verification](docs/verification.md) for the scope of recorded testing.
 
+On macOS, managed Cursor accounts use the CLI's file credential store with a Node preload to select each profile; `HOME` and Cursor's session directory remain shared. This depends on Cursor's internal file APIs and has only been tested with simulated macOS behavior. Managed Cursor usage appears in Accounts; Paseo's own per-chat Cursor usage popover is unavailable for these accounts.
+
 ## Install
 
 Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude and Codex sign-ins to identify accounts and check their limits, and checking limits sends no model messages. The only message it sends to an agent is **Continue.**, after you switch from the row a used-up limit adds to the chat, or after an automatic switch that followed a failed turn. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
