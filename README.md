@@ -196,6 +196,12 @@ This project supports same-provider switching with subscription accounts. Switch
 
 Automated tests cover the implementation with synthetic accounts and provider responses. They do not establish real A → B → A switching, compaction, child-session behavior, or rewind for your accounts. Recorded checks and remaining live verification are in [verification](docs/verification.md).
 
+## Other plugins by dutchakdev
+
+- [Machine Status](https://paseo.sh/plugins/dutchakdev/machine-status) ([source](https://github.com/dutchakdev/paseo-plugin-machine-status)): load, memory, disk, the ports and processes your agents started, and Docker on the daemon's Mac, with dev-cache cleanup and confirmed process stops.
+- [Mermaid](https://paseo.sh/plugins/dutchakdev/mermaid) ([source](https://github.com/dutchakdev/paseo-plugin-mermaid)): draws Mermaid flowcharts and sequence diagrams from chat messages and `.mmd` files, on desktop and mobile.
+- [secure-input](https://paseo.sh/plugins/dutchakdev/secure-input) ([source](https://github.com/dutchakdev/paseo-plugin-secure-input)): agents ask you for secrets through a form, and each value lands in a short-lived file the agent moves without reading it.
+
 ## Documentation and contributions
 
 - [Installation, updates, and troubleshooting](docs/installation.md)

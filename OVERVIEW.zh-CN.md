@@ -39,3 +39,9 @@ Account Switcher 让你在 Paseo 中使用多个 Claude 和 ChatGPT/Codex 订阅
 - 不同套餐提供的模型不同：切换到不提供该智能体模型的套餐后，下一条消息会失败。对于 Codex，切换器会将智能体的模型与该账号套餐提供的模型进行比较，并在 **Apply** 前给出提示。Claude 不报告其模型，因此 Claude 没有此项检查。
 - Codex 的 **In browser** 登录必须在守护进程所在的电脑上完成。在其他设备上请使用 **Device code**。
 - 提供商可能更改限制格式。插件无法读取的值显示为无数据。
+
+## dutchakdev 的其他插件
+
+- [Machine Status](https://paseo.sh/zh-CN/plugins/dutchakdev/machine-status)：显示守护进程所在 Mac 的负载、内存、磁盘、智能体启动的端口和进程以及 Docker，并可清理开发缓存、经确认后停止进程。
+- [Mermaid](https://paseo.sh/zh-CN/plugins/dutchakdev/mermaid)：在聊天消息和 `.mmd` 文件中绘制 Mermaid 流程图和时序图，支持桌面端和移动端。
+- [secure-input](https://paseo.sh/zh-CN/plugins/dutchakdev/secure-input)：智能体通过表单向你索取密钥；每个值写入一个短期文件，智能体只移动该文件而不读取其内容。
