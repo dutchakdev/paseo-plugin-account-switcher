@@ -203,7 +203,7 @@ export class AccountController {
   const target=initial.accounts.find(account=>account.id===input.verifyAccountId);
   if(target&&initial.available[target.provider]&&initial.commands[target.provider]&&!target.loginToken)await this.checkAccount(target.id,true).catch(()=>{this.credentialProofs.delete(target.id);});
   const state=await this.store.read();
-  return state.accounts.filter(a=>a.provider!=="cursor"&&state.available[a.provider]&&state.commands[a.provider]&&!a.loginToken).map(account=>this.toQuotaAccount(account,state));
+  return state.accounts.filter(a=>state.available[a.provider]&&state.commands[a.provider]&&!a.loginToken).map(account=>this.toQuotaAccount(account,state));
  }
  private toQuotaAccount(account:StoredAccount,state:Registry):QuotaAccount {
    const env=accountEnvironment(account,state);

@@ -191,9 +191,9 @@ it("blocks Cursor API-key overrides and refuses macOS account profiles",async()=
   try {expect(()=>buildAccountEnv("cursor","/tmp/profile",{})).toThrow(/only on Linux/);} finally {Object.defineProperty(process,"platform",platform);}
 });
 
-it("excludes Cursor accounts from all quota collection",async()=>{
+it("includes managed Cursor profiles in quota collection",async()=>{
   const f=await fixture(),controller=new AccountController(f.root);closers.push(()=>controller.close());await controller.ready;
-  expect((await controller.quotaAccounts()).some(a=>a.provider==="cursor")).toBe(false);
+  expect((await controller.quotaAccounts()).filter(a=>a.provider==="cursor").map(a=>a.home)).toEqual(expect.arrayContaining([f.first.home,f.second.home]));
 });
 
 });

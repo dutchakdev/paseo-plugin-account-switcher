@@ -110,8 +110,8 @@ function AccountCard({ account, state, snapshot, checksOff, now, theme, layout, 
     </View> : null}
     {notice ? <Notice theme={theme}>{notice}</Notice> : null}
     {action.error ? <Notice theme={theme} tone="danger">{errorMessage(action.error)}</Notice> : null}
-    {account.provider === "cursor" ? <Text style={muted(theme)}>Cursor usage limits are unavailable.</Text> : <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact={layout.compact}
-      onRefresh={loginSession || checksOff ? undefined : () => action.run(() => refresh({ accountId: account.id }))} refreshing={busy} />}
+    <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact={layout.compact}
+      onRefresh={loginSession || checksOff ? undefined : () => action.run(() => refresh({ accountId: account.id }))} refreshing={busy} />
   </View>;
 }
 
