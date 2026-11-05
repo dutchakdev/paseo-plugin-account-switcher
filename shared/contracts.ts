@@ -1,9 +1,9 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export const ProviderSchema = z.enum(["claude", "codex"]);
+export const ProviderSchema = z.enum(["claude", "codex", "cursor"]);
 export type Provider = z.infer<typeof ProviderSchema>;
-export const cliName: Record<Provider, string> = { claude: "Claude Code", codex: "Codex" };
+export const cliName: Record<Provider, string> = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
 export const missingCli = (provider: Provider): string => `${cliName[provider]} CLI was not found on the daemon. Install it or configure its command in Paseo, then reload the plugin.`;
 export const LoginModeSchema = z.enum(["device", "browser"]);
 export const LoginSessionSchema = z.object({
@@ -32,11 +32,11 @@ export const ProviderStatusSchema = z.object({ available: z.boolean(), integrate
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export const StateSchema = z.object({
   accounts: z.array(AccountSchema), bindings: z.array(BindingSchema),
-  defaults: z.object({ claude: z.string().nullable(), codex: z.string().nullable() }),
+  defaults: z.object({ claude: z.string().nullable(), codex: z.string().nullable(), cursor: z.string().nullable() }),
   fallback: z.object({ claude: z.boolean(), codex: z.boolean() }).default({ claude: true, codex: true }),
   autoFailover: z.object({ claude: z.boolean(), codex: z.boolean() }).default({ claude: false, codex: false }),
   integration: z.object({ enabled: z.boolean(), error: z.string().nullable() }),
-  providers: z.object({ claude: ProviderStatusSchema, codex: ProviderStatusSchema }),
+  providers: z.object({ claude: ProviderStatusSchema, codex: ProviderStatusSchema, cursor: ProviderStatusSchema }),
 });
 export type AccountState = z.infer<typeof StateSchema>;
 export const UsageWindowSchema = z.object({
@@ -67,8 +67,8 @@ export const addAccount = defineRpc({ name: "accounts.add", input: z.object({ pr
 export const renameAccount = defineRpc({ name: "accounts.rename", input: AccountId.extend({ label: z.string().trim().min(1).max(80) }), output: AccountSchema });
 export const removeAccount = defineRpc({ name: "accounts.remove", input: AccountId, output: Empty });
 export const setDefaultAccount = defineRpc({ name: "accounts.default", input: z.object({ provider: ProviderSchema, accountId: z.string().nullable() }), output: Empty });
-export const setFallback = defineRpc({ name: "accounts.fallback", input: z.object({ provider: ProviderSchema, enabled: z.boolean() }), output: Empty });
-export const setAutoFailover = defineRpc({ name: "accounts.auto-failover", input: z.object({ provider: ProviderSchema, enabled: z.boolean() }), output: Empty });
+export const setFallback = defineRpc({ name: "accounts.fallback", input: z.object({ provider: ProviderSchema.exclude(["cursor"]), enabled: z.boolean() }), output: Empty });
+export const setAutoFailover = defineRpc({ name: "accounts.auto-failover", input: z.object({ provider: ProviderSchema.exclude(["cursor"]), enabled: z.boolean() }), output: Empty });
 export const startLogin = defineRpc({ name: "auth.start", input: AccountId.extend({ mode: LoginModeSchema.optional() }), output: LoginSessionSchema });
 export const getLoginStatus = defineRpc({ name: "auth.status", input: AccountId.extend({ sessionId: z.string().min(1) }), output: LoginSessionSchema });
 export const submitLoginCode = defineRpc({ name: "auth.submit-code", input: AccountId.extend({ sessionId: z.string().min(1), code: z.string().trim().min(1).max(2048) }), output: LoginSessionSchema });

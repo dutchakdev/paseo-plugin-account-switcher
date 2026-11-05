@@ -42,7 +42,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
     : !state.providers[provider].available ? missingCli(provider)
     : state.integration.enabled ? `Account switching is off for ${cliName[provider]}. Enable it in Accounts.`
     : "Account switching is disabled in Accounts.";
-  const idle = !live.error && idleForSwitch(live.data) && selected?.status === "idle" && selected.attentionReason !== "permission";
+  const idle = !live.error && idleForSwitch(live.data) && ["idle", "error", "closed"].includes(selected?.status ?? "") && selected?.attentionReason !== "permission";
   const switching = binding?.status === "switching";
   const disabled = action.isPending || switching || !enabled;
   const candidates = state?.accounts.filter((account) => account.provider === provider) ?? [];
@@ -63,14 +63,14 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
     {accounts.error ? <Notice theme={theme} tone="danger">{errorMessage(accounts.error)}</Notice> : null}
     {usage.error ? <Notice theme={theme} tone="danger">{errorMessage(usage.error)}</Notice> : null}
     {live.error ? <Notice theme={theme} tone="danger">Agent status unconfirmed: {errorMessage(live.error)}</Notice> : null}
-    {!provider && !live.isPending ? <Notice theme={theme}>Account switching is available for Claude and Codex only.</Notice> : null}
+    {!provider && !live.isPending ? <Notice theme={theme}>Account switching is available for Claude, Codex, and Cursor.</Notice> : null}
     {off ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
       <View style={{ flex: 1, minWidth: 0 }}><Notice theme={theme} tone="warning">{off}</Notice></View>
       <InlineAction theme={theme} onPress={leave}>Open</InlineAction>
     </View> : null}
     {unconfirmed
       ? <Notice theme={theme} tone="warning">Account not confirmed. Choose an account below and apply it when the agent is idle.</Notice>
-      : provider ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
+      : provider === "cursor" ? <Text style={muted(theme)}>{current?.email ?? "Cursor usage limits are unavailable."}</Text> : provider ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
         onRefresh={current ? () => action.run(() => refresh({ accountId: current.id })) : undefined} refreshing={action.isPending} /> : null}
     {candidates.length ? <View style={{ gap: 6 }}>
       <Text style={{ ...muted(theme), fontWeight: "600" }}>Switch to</Text>
@@ -81,7 +81,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
         const blocked = disabled || actual || !available;
         const detail = account.login ? "sign-in in progress · finish in Accounts"
           : !available ? "sign-in required · check in Accounts"
-          : usageSummary(usage.data?.accounts.find((item) => item.accountId === account.id), now);
+          : account.provider === "cursor" ? account.email ?? "sign-in confirmed" : usageSummary(usage.data?.accounts.find((item) => item.accountId === account.id), now);
         return <Pressable key={account.id} accessibilityRole="button" accessibilityLabel={`Prepare account ${account.label}`}
           accessibilityState={{ disabled: blocked, selected: prepared }} disabled={blocked}
           onPress={() => action.run(() => prepare({ agentId, accountId: account.id }))}

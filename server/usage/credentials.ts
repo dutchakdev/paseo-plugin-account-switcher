@@ -9,7 +9,7 @@ import { credentialHash } from "./credential-hash";
  */
 export async function readCredentialVersion(account: QuotaAccount, dependencies: ClaudeDependencies = {}): Promise<string> {
   try {
-    const resolved=account.provider==="claude" ? await readClaudeCredentials(account,dependencies) : {source:"file",raw:await (dependencies.readFile??(path=>readFile(path,"utf8")))(join(account.home,"auth.json"))};
+    const resolved=account.provider==="claude" ? await readClaudeCredentials(account,dependencies) : {source:"file",raw:await (dependencies.readFile??(path=>readFile(path,"utf8")))(join(account.home,account.provider==="cursor"?"cursor":"","auth.json"))};
     return credentialHash(resolved.source,resolved.raw);
   } catch(error) {
     if(error instanceof UsageError)return error.status==="needs_auth"?"absent":"unavailable";

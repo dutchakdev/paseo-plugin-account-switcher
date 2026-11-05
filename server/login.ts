@@ -1,6 +1,6 @@
 import { lstat, mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import type { LoginSession } from "../shared/contracts";
+import type { Provider, LoginSession } from "../shared/contracts";
 import type { Registry, StoredAccount } from "./store";
 import { accountCommand, accountEnvironment } from "./auth";
 import { assertManagedCommand, prepareProfile } from "./profiles";
@@ -17,13 +17,14 @@ export type LoginDependencies = {
 };
 const stale = () => new Error("This sign-in attempt is no longer active. Start sign-in again.");
 const clearDetails = (value: LoginSession) => { value.authorizationUrl = null; value.userCode = null; value.canSubmitCode = false; };
-function loginUrl(value: unknown, provider: "claude" | "codex", mode?: "device" | "browser"): string | null {
+function loginUrl(value: unknown, provider: Provider, mode?: "device" | "browser"): string | null {
   if (typeof value !== "string" || value.length > 16384 || /[\u0000-\u0020\u007f]/.test(value)) return null;
   try {
     const url = new URL(value);
-    const hosts = provider === "claude" ? ["claude.ai", "claude.com", "platform.claude.com", "console.anthropic.com"] : ["auth.openai.com"];
+    const hosts = provider === "claude" ? ["claude.ai", "claude.com", "platform.claude.com", "console.anthropic.com"] : provider === "cursor" ? ["cursor.com"] : ["auth.openai.com"];
     if (url.protocol !== "https:" || url.username || url.password || url.port || !hosts.includes(url.hostname)) return null;
     if (provider === "claude" && (url.pathname !== (url.hostname === "claude.com" ? "/cai/oauth/authorize" : "/oauth/authorize") || !url.searchParams.get("state") || !url.searchParams.get("code_challenge"))) return null;
+    if (provider === "cursor" && (url.pathname !== "/loginDeepControl" || !url.searchParams.get("uuid") || !url.searchParams.get("challenge"))) return null;
     if (provider === "codex" && url.pathname !== (mode === "device" ? "/codex/device" : "/oauth/authorize")) return null;
     return url.toString();
   } catch { return null; }
@@ -44,19 +45,19 @@ export class LoginSessions {
     if (this.disposed) throw new Error("Account sign-in is shutting down. Try again shortly.");
     const duration = Math.min(this.dependencies.timeoutMs ?? 15 * 60_000, 15 * 60_000);
     const entry: Entry = { value: { id: sessionId, accountId: account.id, provider: account.provider,
-      mode: account.provider === "claude" ? "browser" : mode, status: "starting", authorizationUrl: null,
+      mode: account.provider !== "codex" ? "browser" : mode, status: "starting", authorizationUrl: null,
       userCode: null, canSubmitCode: false, error: null, expiresAt: new Date(Date.now() + duration).toISOString() },
       buffer: "", nativeSuccess: false, stopped: false, pendingCompletions: [] };
     this.entries.set(account.id, entry);
-    const env = { ...accountEnvironment(account, registry), BROWSER: "/usr/bin/true", NO_COLOR: "1", TERM: "dumb" };
+    const env = { ...accountEnvironment(account, registry), BROWSER: "/usr/bin/true", NO_COLOR: "1", TERM: "dumb", NO_OPEN_BROWSER: "1" };
     try {
       entry.process = (this.dependencies.createProcess ?? createLoginProcess)({ command,
-        args: account.provider === "claude" ? ["auth", "login", "--claudeai"] : ["app-server", "--stdio"], env, cwd,
+        args: account.provider === "claude" ? ["auth", "login", "--claudeai"] : account.provider === "cursor" ? ["login"] : ["app-server", "--stdio"], env, cwd,
         receiptPath: join(root, "logins", `${account.id}.json`), loginToken: sessionId,
         onData: (stream, data) => this.receive(entry, stream, data),
         onExit: (code, receiptWritten) => {
           entry.stopped = true; clearTimeout(entry.timer); clearDetails(entry.value); entry.buffer = ""; entry.pendingCompletions = [];
-          const successful = code === 0 && (account.provider === "claude" || entry.nativeSuccess);
+          const successful = code === 0 && (account.provider !== "codex" || entry.nativeSuccess);
           entry.finishing = (async () => {
             if (receiptWritten) {
               entry.value.status = "verifying";
@@ -88,15 +89,15 @@ export class LoginSessions {
     }
   }
   private receive(entry: Entry, stream: "stdout" | "stderr", data: string) {
-    if (entry.stopped || entry.value.status === "error" || stream !== "stdout") return;
+    if (entry.stopped || entry.value.status === "error" || (stream !== "stdout" && entry.value.provider !== "cursor")) return;
     if (entry.buffer.length + data.length > 128 * 1024) { void this.fail(entry, "The provider returned an unsupported sign-in response. Update the CLI and try again."); return; }
     entry.buffer += data;
-    if (entry.value.provider === "claude") {
+    if (entry.value.provider !== "codex") {
       // The official CLI prints its manual-redirect URL; keep only this URL.
       const plain = entry.buffer.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
       for (const candidate of plain.match(/https:\/\/[^\s<>\x1b]+(?=[\s<>\x1b])/g) ?? []) {
-        const url = loginUrl(candidate, "claude");
-        if (url && entry.value.status === "starting") { entry.value.authorizationUrl = url; entry.value.canSubmitCode = true; entry.value.status = "waiting"; }
+        const url = loginUrl(candidate, entry.value.provider);
+        if (url && entry.value.status === "starting") { entry.value.authorizationUrl = url; entry.value.canSubmitCode = entry.value.provider === "claude"; entry.value.status = "waiting"; }
       }
       return;
     }

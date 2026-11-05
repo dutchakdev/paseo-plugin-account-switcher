@@ -37,7 +37,7 @@ export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: Us
   const found = new Map<string, UsageAccount>();
   for (const account of registry.accounts) {
     // `loginToken` marks a sign-in still in progress. An `error` status is a failed check, so the last limits stay worth showing.
-    if (account.source !== "managed" || account.authStatus === "needs_auth" || account.loginToken || !account.identityKey) continue;
+    if (account.provider === "cursor" || account.source !== "managed" || account.authStatus === "needs_auth" || account.loginToken || !account.identityKey) continue;
     if (account.identityKey === systemIdentity(account.provider)) continue;
     const key = usageKey(account.provider, account.identityKey);
     // Two accounts signed in as one login are one account to Paseo, which wants unique keys.

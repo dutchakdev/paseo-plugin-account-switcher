@@ -4,7 +4,7 @@ import { accountAvailable } from "./login";
 
 export type AccountArgument = { kind: "open" } | { kind: "account"; account: Account } | { kind: "error"; message: string };
 
-const shortName: Record<Provider, string> = { claude: "Claude", codex: "Codex" };
+const shortName: Record<Provider, string> = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
 
 /** What `/account <args>` refers to among the agent's provider accounts. Never guesses between several matches. */
 export function resolveAccountArgument(state: AccountState, provider: Provider, args: string): AccountArgument {
@@ -32,7 +32,7 @@ export type DefaultCommand = { id: string; title: string; provider: Provider; ac
 
 /** Command Center entries that make a signed-in account its provider's default. */
 export function defaultCommands(state: AccountState): DefaultCommand[] {
-  return (["codex", "claude"] as const).flatMap((provider) => state.accounts
+  return (["codex", "claude", "cursor"] as const).flatMap((provider) => state.accounts
     .filter((account) => account.provider === provider && accountAvailable(account) && state.defaults[provider] !== account.id)
     .map((account) => ({ id: `default-${account.id}`, title: `Make “${account.label}” the ${shortName[provider]} default`, provider, accountId: account.id })));
 }
@@ -50,7 +50,7 @@ export type AccountCommandDependencies = {
 /** `/account [name | default]`: applies at once when the agent is idle and nothing warns against it; otherwise leaves the
  * selection pending in the switcher, where Apply and any warning are visible. Throws messages for the host's error toast. */
 export async function runAccountCommand(provider: Provider | null, agentId: string, args: string, deps: AccountCommandDependencies): Promise<"opened" | "applied" | "pending"> {
-  if (!provider) throw new Error("Account switching is available for Claude and Codex only.");
+  if (!provider) throw new Error("Account switching is available for Claude, Codex, and Cursor.");
   const state = await deps.state();
   const target = resolveAccountArgument(state, provider, args);
   if (target.kind === "error") throw new Error(target.message);

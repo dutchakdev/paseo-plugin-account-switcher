@@ -1,5 +1,6 @@
 import { readFile, mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { AccountSchema, BindingSchema, ProviderSchema, type Provider, type AccountState } from "../shared/contracts";
@@ -9,19 +10,20 @@ export const StoredAccountSchema = AccountSchema.extend({ home: z.string(), iden
 export type StoredAccount = z.infer<typeof StoredAccountSchema>;
 const StoredBindingSchema = BindingSchema.extend({ launchAccountId: z.string().nullable(), launchToken: z.string().nullable(), registrationObserved:z.boolean().default(false), boundAt:z.string().optional() });
 export type StoredBinding = z.infer<typeof StoredBindingSchema>;
-const CommandsSchema = z.object({ claude: z.array(z.string()).nullable(), codex: z.array(z.string()).nullable() });
+// Additive v1 fields default safely when reading a Claude/Codex registry.
+const CommandsSchema = z.object({ claude: z.array(z.string()).nullable(), codex: z.array(z.string()).nullable(), cursor: z.array(z.string()).nullable().default(null) });
 export const RegistrySchema = z.object({
  version: z.literal(1), accounts: z.array(StoredAccountSchema), bindings: z.array(StoredBindingSchema),
- defaults: z.object({claude:z.string().nullable(),codex:z.string().nullable()}),
+ defaults: z.object({claude:z.string().nullable(),codex:z.string().nullable(),cursor:z.string().nullable().default(null)}),
  // Whether a new agent may start on another account when the default would fail; registries before 0.7 had no choice and default to on.
  fallback: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:true,codex:true}),
  // Whether a chat whose turn ran out of its account's limit switches by itself instead of offering a switch; off unless chosen.
  autoFailover: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:false,codex:false}),
- sourceHomes: z.object({claude:z.string(),codex:z.string()}),
- sourceEnvironment: z.object({claude:z.object({CLAUDE_CONFIG_DIR:z.string().optional(),CLAUDE_SECURESTORAGE_CONFIG_DIR:z.string().optional()}),codex:z.object({CODEX_HOME:z.string().optional()})}).default({claude:{},codex:{}}),
+ sourceHomes: z.object({claude:z.string(),codex:z.string(),cursor:z.string().default(join(homedir(),".config"))}),
+ sourceEnvironment: z.object({claude:z.object({CLAUDE_CONFIG_DIR:z.string().optional(),CLAUDE_SECURESTORAGE_CONFIG_DIR:z.string().optional()}),codex:z.object({CODEX_HOME:z.string().optional()}),cursor:z.object({XDG_CONFIG_HOME:z.string().optional(),CURSOR_CONFIG_DIR:z.string().optional()}).default({})}).default({claude:{},codex:{},cursor:{}}),
  commands: CommandsSchema, originalCommands: CommandsSchema,
  // Whether discovery found each provider CLI. Registries written before this field assumed both.
- available: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:true,codex:true}),
+ available: z.object({claude:z.boolean(),codex:z.boolean(),cursor:z.boolean().default(false)}).default({claude:true,codex:true,cursor:false}),
  // Providers whose Paseo commands the plugin owns while integration is enabled.
  integration: z.object({enabled:z.boolean(),error:z.string().nullable(),providers:z.array(ProviderSchema).default(["claude","codex"])}),
 });
@@ -43,10 +45,14 @@ export function boundAccount(registry: Registry, agentId: string, provider: Prov
 export class AccountStore {
  private queue: Promise<unknown> = Promise.resolve();
  constructor(readonly root: string) {}
- async initialize(sourceHomes: Registry["sourceHomes"]): Promise<void> {
+ async initialize(sourceHomes: z.input<typeof RegistrySchema>["sourceHomes"]): Promise<void> {
    await mkdir(this.root, { recursive:true, mode:0o700 });
    try {
     await this.change(state => {
+     if (!state.accounts.some(account => account.id === "system-cursor")) {
+      state.sourceHomes.cursor = sourceHomes.cursor ?? join(homedir(),".config");
+      state.accounts.push({id:"system-cursor",provider:"cursor",label:"Current CLI · Cursor",source:"system",home:state.sourceHomes.cursor,email:null,plan:null,authStatus:"unknown",createdAt:new Date().toISOString(),identityKey:null,generation:0,loginToken:null});
+     }
      for (const account of state.accounts) {
       const providerName = account.provider === "claude" ? "Claude" : "Codex";
       // Translate only the original generated label; preserve all user labels.
@@ -57,9 +63,9 @@ export class AccountStore {
    } catch(error) { if(!isMissing(error)) throw new Error("The account registry is damaged; automatic recovery is disabled."); }
    const now = new Date().toISOString();
    await atomicWrite(join(this.root,"registry.json"),JSON.stringify({
-    version:1, sourceHomes, accounts: (["claude","codex"] as const).map(provider=>({
-     id:`system-${provider}`,provider,label:`Current CLI · ${provider === "claude"?"Claude":"Codex"}`,
-     source:"system",home:sourceHomes[provider],email:null,plan:null,authStatus:"unknown",createdAt:now,identityKey:null,generation:0,
+    version:1, sourceHomes, accounts: (["claude","codex","cursor"] as const).map(provider=>({
+     id:`system-${provider}`,provider,label:`Current CLI · ${provider === "claude"?"Claude":provider === "cursor"?"Cursor":"Codex"}`,
+     source:"system",home:sourceHomes[provider] ?? join(homedir(),".config"),email:null,plan:null,authStatus:"unknown",createdAt:now,identityKey:null,generation:0,
     })), bindings:[], defaults:{claude:null,codex:null}, commands:{claude:null,codex:null},originalCommands:{claude:null,codex:null},integration:{enabled:false,error:null},
    },null,2));
  }
@@ -71,7 +77,7 @@ export class AccountStore {
  async snapshot():Promise<AccountState> {
    const state=await this.read();
    const status=(provider:Provider)=>({available:state.available[provider],integrated:state.integration.enabled&&state.integration.providers.includes(provider)});
-   return { accounts:state.accounts.map(a=>AccountSchema.parse(a)),bindings:state.bindings.map(b=>BindingSchema.parse(b)),defaults:state.defaults,fallback:state.fallback,autoFailover:state.autoFailover,integration:{enabled:state.integration.enabled,error:state.integration.error},providers:{claude:status("claude"),codex:status("codex")} };
+   return { accounts:state.accounts.map(a=>AccountSchema.parse(a)),bindings:state.bindings.map(b=>BindingSchema.parse(b)),defaults:state.defaults,fallback:state.fallback,autoFailover:state.autoFailover,integration:{enabled:state.integration.enabled,error:state.integration.error},providers:{claude:status("claude"),codex:status("codex"),cursor:status("cursor")} };
  }
  async add(provider:Provider,label:string):Promise<StoredAccount> {
    return this.change(state=>{const account:StoredAccount={id:randomUUID(),provider,label:label.trim(),source:"managed",home:"",email:null,plan:null,authStatus:"needs_auth",createdAt:new Date().toISOString(),identityKey:null,generation:0,loginToken:null};account.home=join(this.root,"accounts",account.id,provider);state.accounts.push(account);return account;});
