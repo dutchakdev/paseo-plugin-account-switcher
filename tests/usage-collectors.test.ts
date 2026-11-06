@@ -50,6 +50,22 @@ describe("isolated quota collectors", () => {
     await expect(collectClaudeUsage(account,dependencies)).rejects.toMatchObject({status:"unavailable"});
     expect(await readCredentialVersion(account,dependencies)).toBe("unavailable");
   });
+  it.each(["", "{}", "null", "not json", JSON.stringify({claudeAiOauth:{accessToken:"",refreshToken:"",subscriptionType:"max"}})])("does not mistake a metadata-only fallback for sign-out while Keychain is inaccessible (%s)", async raw => {
+    const fetch=vi.fn();
+    const dependencies={platform:"darwin",readKeychain:async()=>{throw new Error("User interaction is not allowed");},readFile:async()=>raw,fetch};
+    await expect(collectClaudeUsage(account,dependencies)).rejects.toMatchObject({status:"unavailable",code:"keychain_unavailable",message:expect.stringContaining("Unlock it")});
+    expect(await readCredentialVersion(account,dependencies)).toBe("unavailable");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("recovers from denied Keychain access as soon as the same item is readable",async()=>{
+    let unlocked=false;
+    const dependencies={platform:"darwin",readKeychain:async()=>{if(!unlocked)throw new Error("denied");return JSON.stringify({claudeAiOauth:{accessToken:"fixture"}});},readFile:async()=>JSON.stringify({claudeAiOauth:{accessToken:""}}),fetch:vi.fn(async()=>new Response(JSON.stringify({five_hour:{utilization:12}})))};
+    expect(await readCredentialVersion(account,dependencies)).toBe("unavailable");
+    unlocked=true;
+    expect(await readCredentialVersion(account,dependencies)).toMatch(/^present:/);
+    expect((await collectClaudeUsage(account,dependencies)).windows[0]?.usedPercent).toBe(12);
+    expect(dependencies.fetch).toHaveBeenCalledOnce();
+  });
   it.each([[401,"needs_auth"],[403,"unavailable"]] as const)("classifies HTTP %i without returning the provider body", async (status,expected) => {
     await expect(collectClaudeUsage(account,{platform:"linux",readFile:async()=>JSON.stringify({claudeAiOauth:{accessToken:"fixture"}}),fetch:async()=>new Response("SECRET body",{status})})).rejects.toMatchObject({status:expected});
   });

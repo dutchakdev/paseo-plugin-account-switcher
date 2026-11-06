@@ -19,7 +19,9 @@ export async function usageChecksEnabled(configPath: string): Promise<boolean> {
 }
 export class UsageError extends Error {
   constructor(public readonly status: "needs_auth" | "unavailable", public readonly code: string, public readonly retryAfterMs?: number) {
-    super(status === "needs_auth" ? "Sign in again to retrieve limits." : "The limits service is temporarily unavailable.");
+    super(code === "keychain_unavailable" ? "Cannot access macOS Keychain. Unlock it and allow Claude Code to read its credentials, then check sign-in again."
+      : code === "credential_read_failed" ? "Cannot read saved credentials. Check profile permissions and, on macOS, unlock Keychain and allow Claude Code access."
+      : status === "needs_auth" ? "Sign in again to retrieve limits." : "The limits service is temporarily unavailable.");
   }
 }
 type Entry = { fingerprint: string; accountFingerprint: string; provenIdentity: boolean; snapshot: UsageSnapshot; success?: UsageSnapshot; attempts: number; attemptedAt: number | null; retryAt: number };
@@ -154,7 +156,7 @@ export function createUsageService(options: UsageOptions) {
           const flight=flights.get(account.id);if(flight)flight.entry=entry;
           entry.attemptedAt=now();
           account=verified;
-          if(account.requireIdentityVerification&&!identityProven(account))throw new UsageError(account.credentialVersion==="absent"?"needs_auth":"unavailable","identity_unverified");
+          if(account.requireIdentityVerification&&!identityProven(account))throw new UsageError(account.credentialVersion==="absent"?"needs_auth":"unavailable",account.credentialVersion==="unavailable"?"credential_read_failed":"identity_unverified");
           requested=true;
           result = await fetchUsage(account,controller.signal);
           if (account.identityKey && result.identityKey && account.identityKey !== result.identityKey) throw new UsageError("needs_auth","identity_changed");

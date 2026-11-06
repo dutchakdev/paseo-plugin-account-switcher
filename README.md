@@ -58,11 +58,11 @@ To review or change the source first, install a [local checkout](docs/installati
 1. In Paseo, turn on **Settings → Plugins → Enable plugins**.
 2. Check that `paseo plugin ls account-switcher` shows **running**, then open **Accounts** in the sidebar or **Accounts and limits** in the Command Center. An app without Paseo's current screen API shows the same Accounts through the older surface API.
 3. Accounts lists the sign-ins your daemon already uses as **Current CLI · Claude** and **Current CLI · Codex**. A provider without its CLI has no Current CLI entry.
-4. Select **Enable** in Accounts. This is separate from Paseo's plugin switch: the plugin saves your original Claude and Codex commands and points Paseo at its launchers. It leaves running chats alone, and **Disable** restores the original commands.
+4. Turn on **Account switching** in Accounts. This is separate from Paseo's plugin switch: the plugin saves your original Claude and Codex commands and points Paseo at its launchers. It leaves running chats alone, and turning it off restores the original commands.
 
 ## Add an account
 
-Select **Add**, choose a provider, name the account, and select **Add and sign in**. The official CLI runs in the background; the plugin opens a sign-in dialog without creating a terminal or workspace.
+Select **Add account**, choose a provider, name the account, and select **Add and sign in**. The official CLI runs in the background; the plugin opens a sign-in dialog without creating a terminal or workspace.
 
 | Where you use Paseo | How to open sign-in |
 | --- | --- |
@@ -75,13 +75,13 @@ If clipboard access is unavailable, expand **Show sign-in link** and copy its se
 - **Codex, Device code:** enter the displayed code on the provider's page. Use it from a phone or another computer.
 - **Codex, In browser:** finish in a browser on the **daemon's computer**, because the callback uses localhost. From another device, cancel and choose **Device code**.
 
-After sign-in, the plugin verifies the account and refreshes its limits. To check again, use **Check sign-in** in the account's **⋯** menu. Enter passwords only on the provider's official page.
+After sign-in, the plugin verifies the account and refreshes its limits. To check again, open **Manage → Sign-in → Check**. An unverified account also has a visible **Check sign-in** button. Enter passwords only on the provider's official page.
 
 Closing the dialog leaves **Continue sign-in** on the account. **Cancel sign-in** stops the process before releasing the profile. While sign-in is active, the account cannot be applied, made the default, or deleted. A failed start leaves the account available for **Retry sign-in** without creating a duplicate. Plugin reloads stop pending sign-ins; start again afterward.
 
 ### Manage accounts
 
-The **⋯** menu contains refresh, check sign-in, default, sign-in, rename, and remove actions. Account rows show identity, default status, and counts of current and pending agents.
+Open **Manage** for sign-in, limits, default, and rename actions. Each added account has a visible **Remove** button. Its confirmation explains any blockers and offers **Clear default** when needed. The host’s **Current CLI** entries explain why they cannot be removed. Account rows show identity, default status, and counts of current and pending agents.
 
 ### Default for new agents
 
@@ -152,7 +152,7 @@ When a Claude or Codex turn ends because its account's limit is used up, the plu
 - With another account available: *Work's limit is used up until 18:00.* and a button **Switch to Second and continue**. The time is the latest reset among the used-up windows, in your local time zone; without a reset time from the provider, the sentence ends at *used up*.
 - Without one: *Work's limit is used up until 18:00. No other account has room.*
 
-The offered account is the one a new agent would try instead: a signed-in account of the same provider, not in the middle of a sign-in, not used up, and for Codex with a plan that offers the agent's model. If several qualify, the one with the most room is offered. Agents on **Current CLI** are included. An agent started while no Paseo app was open, by a schedule or `paseo run`, is included too: the plugin confirms its account from the launcher's startup receipt first. An agent whose account nothing confirms gets no row. Nothing is offered while account switching is off for that provider (**Enable** in Accounts).
+The offered account is the one a new agent would try instead: a signed-in account of the same provider, not in the middle of a sign-in, not used up, and for Codex with a plan that offers the agent's model. If several qualify, the one with the most room is offered. Agents on **Current CLI** are included. An agent started while no Paseo app was open, by a schedule or `paseo run`, is included too: the plugin confirms its account from the launcher's startup receipt first. An agent whose account nothing confirms gets no row. Nothing is offered while account switching is off for that provider (**Account switching** in Accounts).
 
 The button switches the chat through the same checks as **Apply** and `/account` (the agent is idle, no permission request is pending, the new account is confirmed at startup), then sends the agent **Continue.** The row follows: *Switching from Work to Second…*, then *Switched from Work to Second.* If the switch is refused or fails, the row says *Could not switch to Second* with the reason:
 
@@ -188,7 +188,7 @@ The plugin also reports to Paseo's own Usage view, as the source **Account Switc
 
 Plugin directory, npm, and Git installations update with `paseo plugin update account-switcher`, which shows the new revision and asks for approval.
 
-Before disabling or removing the plugin, select **Disable** in Accounts to restore the original provider commands. Removal does not delete the separately stored account data. See [update and removal](docs/installation.md#update) for a local checkout, the full steps, and recovery.
+Before disabling or removing the plugin, turn off **Account switching** in Accounts to restore the original provider commands. Removal does not delete the separately stored account data. See [update and removal](docs/installation.md#update) for a local checkout, the full steps, and recovery.
 
 ## Scope
 

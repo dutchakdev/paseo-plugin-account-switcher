@@ -80,6 +80,8 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
         const available = accountAvailable(account);
         const blocked = disabled || actual || !available;
         const detail = account.login ? "sign-in in progress · finish in Accounts"
+          : account.authStatus === "error" ? "cannot access sign-in · check credentials in Accounts"
+          : account.authStatus === "unknown" ? "sign-in not confirmed · check in Accounts"
           : !available ? "sign-in required · check in Accounts"
           : usageSummary(usage.data?.accounts.find((item) => item.accountId === account.id), now);
         return <Pressable key={account.id} accessibilityRole="button" accessibilityLabel={`Prepare account ${account.label}`}
