@@ -72,8 +72,13 @@ allowance becomes a window with `usedPercent = 100 - remainingPercent`.
 
 **Claude:** on macOS the exact Keychain service/account is preferred. A missing
 or inaccessible item falls back only to `.credentials.json` in the supplied home,
-matching the native CLI's read behavior. Inaccessible Keychain plus a missing file
-remains `unavailable`, since that does not prove the user is signed out. Existing Keychain
+matching the native CLI's read behavior. Inaccessible Keychain plus a missing,
+malformed, or metadata-only file with an empty OAuth access token remains
+`unavailable`, since that does not prove the user is signed out. Recent Claude
+CLIs can leave subscription metadata with empty tokens in this file while
+Keychain holds the actual sign-in. A negative official CLI probe in this condition
+is an authentication check error: the controller preserves the last identity and
+refuses switching until a later official probe confirms it again. Existing Keychain
 credentials with no OAuth token do not fall through to a different file identity.
 The installed Claude Code 2.1.263 source was checked for its directory hash and
 credential precedence: a custom directory uses the first eight SHA-256 hex digits

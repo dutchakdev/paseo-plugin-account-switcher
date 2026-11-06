@@ -40,10 +40,21 @@ export async function readClaudeCredentials(account: QuotaAccount, dependencies:
       try {if(JSON.parse(raw)!==null)return {raw,source:"keychain"};} catch { /* Native CLI falls back for corrupt Keychain JSON. */ }
     }
   }
-  try {return {raw:await (dependencies.readFile ?? (p=>readFile(p,"utf8")))(join(account.home,".credentials.json")),source:"file"};}
+  try {
+    const raw=await (dependencies.readFile ?? (p=>readFile(p,"utf8")))(join(account.home,".credentials.json"));
+    // Recent CLIs leave metadata with empty tokens here when Keychain owns the
+    // sign-in. That file cannot establish auth loss while Keychain is unreadable.
+    if(keychainUnavailable){
+      let oauth:Record<string,unknown>|null=null;
+      try{oauth=object(object(JSON.parse(raw))?.claudeAiOauth);}catch{/* Unusable fallback. */}
+      if(!string(oauth?.accessToken))throw new UsageError("unavailable","keychain_unavailable");
+    }
+    return {raw,source:"file"};
+  }
   catch(error) {
+    if(error instanceof UsageError)throw error;
     const missing=["ENOENT","ENOTDIR"].includes((error as NodeJS.ErrnoException)?.code??"");
-    throw new UsageError(missing&&!keychainUnavailable?"needs_auth":"unavailable",missing&&!keychainUnavailable?"missing_credentials":"credential_read_failed");
+    throw new UsageError(missing&&!keychainUnavailable?"needs_auth":"unavailable",keychainUnavailable?"keychain_unavailable":missing?"missing_credentials":"credential_read_failed");
   }
 }
 function keychain(target: KeychainTarget, signal?: AbortSignal): Promise<string | null> {

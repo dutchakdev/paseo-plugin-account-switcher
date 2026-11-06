@@ -58,7 +58,8 @@ export class SwitchService {
      if(target.loginToken)throw new SwitchRefusal("Finish signing in to the selected account first.");
      const assertIdle=async()=>{const agent=await this.deps.inspect(agentId);if(agent.archived)throw new SwitchRefusal("The agent is archived.");if(agent.provider!==target.provider)throw new SwitchRefusal("The agent provider changed.");if(agent.busy)throw new SwitchRefusal("Wait for the agent to finish its response.");};
      await assertIdle();
-     if((await this.deps.checkAccount(target.id)).authStatus!=="ready")throw new SwitchRefusal("Sign in to the selected account first.");
+     const {authStatus}=await this.deps.checkAccount(target.id);
+     if(authStatus!=="ready")throw new SwitchRefusal(authStatus==="needs_auth"?"Sign in to the selected account first.":"Cannot verify the selected account's sign-in. Check its credentials in Accounts, then try again.");
      await assertIdle();
      previous=await store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(!r.integration.enabled||!b||b.pendingAccountId!==target.id||b.status==="switching")throw new SwitchRefusal("The account selection changed; try again.");if(accountFrom(r,target.id).loginToken)throw new SwitchRefusal("Account sign-in is still in progress.");const old=structuredClone(b);b.status="switching";b.error=null;b.launchAccountId=target.id;b.launchToken=token;return old;});
      switching?.();

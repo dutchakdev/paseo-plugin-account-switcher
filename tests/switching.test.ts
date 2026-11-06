@@ -60,6 +60,20 @@ function makeService(store:AccountStore,overrides:Partial<Omit<SwitchDependencie
  return new SwitchService({store,inspect:async()=>({provider:"codex",busy:false,archived:false}),checkAccount:async()=>({authStatus:"ready"}),reload:id=>writeReceipt(store,id),receiptTimeoutMs:300,...overrides});
 }
 
+it("keeps a switch pending through inaccessible credentials and applies it after recovery",async()=>{
+ const {store,target}=await fixture();
+ let available=false;
+ const reload=vi.fn(async(id:string)=>writeReceipt(store,id));
+ const service=makeService(store,{checkAccount:async()=>({authStatus:available?"ready":"error"}),reload});
+ await service.prepare("recovering-agent",target.id);
+ await expect(service.apply("recovering-agent",target.id)).rejects.toThrow("Cannot verify");
+ expect(reload).not.toHaveBeenCalled();
+ expect((await store.snapshot()).bindings[0]).toMatchObject({currentAccountId:"system-codex",pendingAccountId:target.id});
+ available=true;
+ await expect(service.apply("recovering-agent",target.id)).resolves.toMatchObject({currentAccountId:target.id,pendingAccountId:null});
+ expect(reload).toHaveBeenCalledOnce();
+});
+
 it("waits for a receipt from a provider CLI that starts after reload returns",async()=>{
  const {store,target}=await fixture();let started:Promise<void>|undefined;
  // The receipt lands 150 ms after reload returns; the margin must survive a slow CI runner.

@@ -595,6 +595,16 @@ describe("confirmation token lifecycle", () => {
 });
 
 describe("default account authentication", () => {
+  it("retains a verified identity on temporary credential-access failure and recovers on the next check", async () => {
+    const { controller, account } = await fixture();
+    const ready = await controller.checkAccount(account.id);
+    mocks.usage.invalidate.mockClear();
+    mocks.probeAccount.mockResolvedValueOnce({ identityKey: null, email: null, plan: null, authStatus: "error" });
+    const unavailable = await controller.checkAccount(account.id);
+    expect(unavailable).toMatchObject({ identityKey: ready.identityKey, email: ready.email, plan: ready.plan, generation: ready.generation, authStatus: "error" });
+    expect(mocks.usage.invalidate).not.toHaveBeenCalled();
+    expect(await controller.checkAccount(account.id)).toMatchObject({ identityKey: ready.identityKey, generation: ready.generation, authStatus: "ready" });
+  });
   it("requires a ready official auth probe before persisting a new default", async () => {
     const { controller, account } = await fixture();
     mocks.probeAccount.mockResolvedValueOnce({ identityKey: null, email: null, plan: null, authStatus: "needs_auth" });

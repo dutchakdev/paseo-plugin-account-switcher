@@ -2,11 +2,14 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import type { PaseoApi } from "./paseo-api";
 import { missingCli, type Provider } from "../shared/contracts";
 import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
 import { launcherPath, writeLaunchers } from "./integration";
+import { readClaudeCredentials } from "./usage/claude";
+import { UsageError } from "./usage";
 
 export function accountCommand(registry: Registry, provider: Provider): string[] {
   if (!registry.available[provider]) throw new Error(missingCli(provider));
@@ -51,6 +54,18 @@ const string = (value: unknown): string | null => typeof value === "string" && v
 const identity = (provider: Provider, fields: Array<string | null>): string | null => fields.some(Boolean)
   ? `${provider}:${createHash("sha256").update(JSON.stringify(fields)).digest("hex")}` : null;
 
+async function negativeSignIn(account: StoredAccount, registry: Registry, env: NodeJS.ProcessEnv): Promise<Identity> {
+  if (account.provider === "claude") {
+    // A negative CLI probe also occurs when macOS denies access to Keychain.
+    try {
+      await readClaudeCredentials({ id: account.id, provider: "claude", home: (env.CLAUDE_SECURESTORAGE_CONFIG_DIR ?? env.CLAUDE_CONFIG_DIR) || join(env.HOME || homedir(), ".claude"), command: accountCommand(registry, "claude"), env, identityKey: account.identityKey, generation: account.generation });
+    } catch (error) {
+      if (error instanceof UsageError && error.status === "unavailable") return empty("error");
+    }
+  }
+  return empty("needs_auth");
+}
+
 async function status(command: string[], args: string[], env: NodeJS.ProcessEnv): Promise<{ code: number | null; stdout: string; stderr: string; failed: boolean }> {
   return new Promise(resolve => {
     execFile(command[0], [...command.slice(1), ...args], { env, timeout: 20_000, maxBuffer: 256 * 1024, encoding: "utf8", windowsHide: true }, (error, stdout, stderr) => {
@@ -74,13 +89,14 @@ export async function probeAccount(account: StoredAccount, registry: Registry): 
       await assertManagedCommand(account.provider, accountCommand(registry, account.provider).slice(1));
       await prepareProfile({ provider: account.provider, home: account.home, sourceHome: registry.sourceHomes[account.provider], sourceEnvironment: registry.sourceEnvironment[account.provider] });
     }
-    const result = await status(accountCommand(registry, account.provider), account.provider === "claude" ? ["auth", "status", "--json"] : ["login", "status"], accountEnvironment(account, registry));
+    const env = accountEnvironment(account, registry);
+    const result = await status(accountCommand(registry, account.provider), account.provider === "claude" ? ["auth", "status", "--json"] : ["login", "status"], env);
     if (result.failed) return empty("error");
-    if (result.code !== 0) return empty("needs_auth");
+    if (result.code !== 0) return negativeSignIn(account, registry, env);
     if (account.provider === "claude") {
       // Only the official status JSON is parsed; stderr is never exposed to callers.
       const value = JSON.parse(result.stdout.trim());
-      if (value.loggedIn !== true) return empty("needs_auth");
+      if (value.loggedIn !== true) return negativeSignIn(account, registry, env);
       if (value.authMethod !== "claude.ai" && value.authMethod !== "oauth_token") return empty("unknown");
       const email = string(value.email), orgId = string(value.orgId);
       return { identityKey: identity("claude", [email, orgId]), email, plan: string(value.subscriptionType), authStatus: "ready" };

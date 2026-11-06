@@ -157,7 +157,7 @@ export function accountStatus(account: Account, snapshot: UsageSnapshot | undefi
     ready: { text: "sign-in confirmed", tone: "success" as Tone },
     needs_auth: { text: "sign-in required", tone: "warning" as Tone },
     unknown: { text: "sign-in not checked", tone: "muted" as Tone },
-    error: { text: "sign-in error", tone: "danger" as Tone },
+    error: { text: "sign-in unavailable", tone: "warning" as Tone },
   }[account.authStatus];
 }
 

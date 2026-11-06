@@ -1,7 +1,41 @@
 # Verification
 
-Last checked: **2026-11-01**. These results describe observed checks, not a guarantee
+Last checked: **2026-11-07**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
+
+## Credential access and account controls, 2026-11-07
+
+`npm run check` passed build, typecheck, and **550/550 tests** in 42 files.
+Regressions cover inaccessible Keychain with a metadata-only fallback file,
+negative official CLI probes, preserving identity on temporary credential-access
+failure, refusing a switch before reload and applying it after auth recovery,
+and account-removal confirmation in both compact and wide component trees.
+
+On the running macOS Paseo **0.15.0-beta.1** daemon with Claude Code **2.1.316**:
+
+- The original system Claude entry could not read its Keychain token:
+  `security` exited 36 and the official CLI reported `loggedIn: false`.
+  The fallback file existed but contained empty OAuth tokens. No secret values
+  were printed during diagnosis.
+- The changed plugin reloaded as `running`. The live Accounts screen showed
+  **sign-in unavailable**, the Keychain recovery message, native settings rows,
+  **Manage**, and visible **Remove** actions on managed accounts. A light-theme
+  desktop screenshot and the accessibility tree were inspected.
+- Unlocking Keychain in the daemon's terminal restored credential reads and the
+  official CLI temporarily reported `loggedIn: true`. Its expired token did not
+  survive the CLI's subsequent renewal. After a fresh official sign-in, the
+  plugin's `auth.check` returned `ready` with the Max plan and its `usage.refresh`
+  returned `ok`, no error, and freshly fetched limit windows.
+- The existing pending selection belonged to a closed chat; it was not applied
+  or resumed during this diagnosis. No real account was removed and no model
+  message was sent.
+
+The account is eligible for selection again. An actual switch in the user's
+intended idle chat remains a separate live acceptance step; the safe refusal and
+recovery path passed the automated switch test. Native mobile layout and
+dark-theme rendering were not observed during this pass. A final attempt to
+reopen the native UI timed out in computer automation; post-login verification
+used the running plugin's authenticated `auth.check` and `usage.refresh` RPCs.
 
 ## Automated checks
 
