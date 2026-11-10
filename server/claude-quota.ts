@@ -13,6 +13,13 @@ function timestamp(value: unknown): number {
   return typeof value === "string" ? Date.parse(value) : NaN;
 }
 
+/** These are unexecuted SDK queue bookkeeping, not new user/model input. */
+function queuedBookkeeping(entry:RecordValue):boolean {
+  const origin=object(entry.origin);
+  return entry.type==="user"&&entry.queueTranscriptOnly===true&&entry.promptSource==="system"&&
+    origin.kind==="task-notification"&&origin.producer==="session-task"&&entry.queueSkipAttachments===true;
+}
+
 export interface ClaudeQuotaInput {
   configDir: string;
   cwd: string;
@@ -21,6 +28,8 @@ export interface ClaudeQuotaInput {
   messageId: string;
   startedAt: number;
   endedAt: number;
+  /** Only live observation uses this lower bound; foreground hooks can arrive late. */
+  minErrorAt?: number;
 }
 export interface ClaudeQuotaEvidence { errorId: string; userId: string }
 
@@ -41,8 +50,8 @@ export function claudeProjectName(cwd: string): string {
  * Ordinary prose, SDK retry events and abandoned parent branches never count.
  * Private JSONL fields were verified with an isolated Claude 2.1.321 process
  * talking only to a synthetic local 429 endpoint; unknown formats return null. */
-export function parseClaudeQuota(text: string, input: Pick<ClaudeQuotaInput, "sessionId" | "messageId" | "startedAt" | "endedAt">): ClaudeQuotaEvidence | null {
-  const { sessionId, messageId, startedAt, endedAt } = input;
+export function parseClaudeQuota(text: string, input: Pick<ClaudeQuotaInput, "sessionId" | "messageId" | "startedAt" | "endedAt" | "minErrorAt">): ClaudeQuotaEvidence | null {
+  const { sessionId, messageId, startedAt, endedAt, minErrorAt } = input;
   if (!UUID.test(sessionId) || !validMessageId(messageId) || !Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt || !text.endsWith("\n")) return null;
   const nodes = new Map<string, RecordValue>();
   let head: string | null = null;
@@ -63,13 +72,17 @@ export function parseClaudeQuota(text: string, input: Pick<ClaudeQuotaInput, "se
     seen.add(head);
     const entry = nodes.get(head);
     if (!entry) return null; // Truncated or missing parent before a real user anchor.
+    // Follow, rather than drop, the exact parent link. A transcript-only queue
+    // flush can be written after the SDK terminal callback and carries no new execution.
+    if(queuedBookkeeping(entry)){head=entry.parentUuid as string|null;continue;}
     const at = timestamp(entry.timestamp);
     if (!Number.isFinite(at) || at > endedAt) return null;
     if (!error) {
       if (entry.type === "user") return null; // A newer input wins, including a tool result.
       if (entry.type === "assistant") {
-        if (object(entry.message).id !== messageId || entry.isApiErrorMessage !== true || entry.error !== "rate_limit" ||
+        if ((object(entry.message).id !== messageId && entry.uuid !== messageId) || entry.isApiErrorMessage !== true || entry.error !== "rate_limit" ||
             entry.apiError !== undefined && entry.apiError !== "usage_limit_reached") return null;
+        if(minErrorAt!==undefined&&(!Number.isFinite(minErrorAt)||at<minErrorAt))return null;
         error = entry;
       }
     } else if (entry.type === "user") {

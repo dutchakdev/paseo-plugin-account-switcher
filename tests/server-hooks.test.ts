@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UsageSnapshot } from "../shared/contracts";
 import { SwitchRefusal } from "../server/switching";
 import { ContinuationCoordinator } from "../server/continuation";
+import { ContinuationObservation } from "../server/continuation-observation";
 
 const controller = vi.hoisted(() => {
   const bindNewAgent = vi.fn(async (..._args: unknown[]): Promise<unknown> => undefined);
@@ -259,6 +260,18 @@ describe("quota continuation lifecycle wiring", () => {
       await on.get("agent.turn_ended")!(event, { paseo });
       expect(ended).toHaveBeenCalledWith(event, paseo);
     } finally { started.mockRestore(); ended.mockRestore(); }
+  });
+  it("connects canceled hooks and foreground recovery to the shared observation stop gate", async () => {
+    const canceled=vi.spyOn(ContinuationObservation.prototype,"canceled");
+    const permitted=vi.spyOn(ContinuationObservation.prototype,"permitsRecovery").mockResolvedValue(false);
+    const {on}=startAll(),{paseo,sent}=paseoRecorder();
+    const event={agent:{id:"agent-1",provider:"claude",cwd:"/work",parentAgentId:null},turnId:"turn",outcome:{kind:"completed"}};
+    try{
+      on.get("agent.turn_ended")!({...event,outcome:{kind:"canceled"}},{paseo});
+      expect(canceled).toHaveBeenCalledWith("agent-1");
+      on.get("agent.turn_started")!(event,{paseo});on.get("agent.turn_ended")!(event,{paseo});
+      await vi.waitFor(()=>expect(permitted).toHaveBeenCalledWith(paseo,"agent-1"));expect(sent).toEqual([]);
+    }finally{canceled.mockRestore();permitted.mockRestore();}
   });
   it("invalidates pending recovery on permissions, archives and manual selections", async () => {
     const invalidated = vi.spyOn(ContinuationCoordinator.prototype, "invalidate");

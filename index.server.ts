@@ -1,7 +1,8 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import * as rpc from "./shared/contracts";
 import { AccountController } from "./server/controller";
-import { ContinuationCoordinator, type RecoveryAgent } from "./server/continuation";
+import { ContinuationObservation, recoveryAgent } from "./server/continuation-observation";
+import { ContinuationCoordinator } from "./server/continuation";
 import { readClaudeTurnMessageId } from "./server/continuation-timeline";
 import { ContinuationLedger } from "./server/continuation-ledger";
 import { readClaudeQuota } from "./server/claude-quota";
@@ -31,19 +32,20 @@ export default function contribute(server:PluginServerContext){
  // An agent whose creation fails never gets that event, so entries expire.
  const startNotes=new Map<string,{note:AccountNote;at:number}>();
  const NOTE_TTL=600_000;
- server.handle(rpc.listAccounts,async(_,{paseo})=>controller.snapshot(paseo));
- server.handle(rpc.addAccount,async({provider,label},{paseo})=>{await controller.ensureRuntime(paseo);return controller.add(provider,label);});
- server.handle(rpc.renameAccount,async({accountId,label})=>{await controller.ready;return controller.store.change(r=>{const a=accountFrom(r,accountId);a.label=label;return rpc.AccountSchema.parse(a);});});
- server.handle(rpc.removeAccount,async({accountId},{paseo})=>{await controller.remove(accountId,paseo);return{};});
- server.handle(rpc.setFallback,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.fallback[provider]=enabled;});return{};});
- server.handle(rpc.setDefaultAccount,async({provider,accountId},{paseo})=>{await controller.ensureRuntime(paseo);await controller.setDefault(provider,accountId);return{};});
- server.handle(rpc.startLogin,async({accountId,mode},{paseo})=>{await controller.ensureRuntime(paseo);return controller.startLogin(paseo,accountId,mode);});
- server.handle(rpc.getLoginStatus,async({accountId,sessionId})=>controller.getLoginStatus(accountId,sessionId));
- server.handle(rpc.submitLoginCode,async({accountId,sessionId,code})=>controller.submitLoginCode(accountId,sessionId,code));
- server.handle(rpc.checkLogin,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return controller.finishLogin(accountId);});
- server.handle(rpc.cancelLogin,async({accountId,sessionId},{paseo})=>{await controller.ensureRuntime(paseo);return controller.cancelLogin(paseo,accountId,sessionId);});
- server.handle(rpc.prepareSwitch,async({agentId,accountId},{paseo})=>{continuation.invalidate(agentId);await controller.ensureRuntime(paseo);return controller.switcher(paseo).prepare(agentId,accountId);});
- server.handle(rpc.applySwitch,async({agentId,accountId},{paseo})=>{
+ const handle:PluginServerContext["handle"]=(contract,handler)=>server.handle(contract,(input,context)=>{observe(context.paseo);return handler(input,context);});
+ handle(rpc.listAccounts,async(_,{paseo})=>controller.snapshot(paseo));
+ handle(rpc.addAccount,async({provider,label},{paseo})=>{await controller.ensureRuntime(paseo);return controller.add(provider,label);});
+ handle(rpc.renameAccount,async({accountId,label})=>{await controller.ready;return controller.store.change(r=>{const a=accountFrom(r,accountId);a.label=label;return rpc.AccountSchema.parse(a);});});
+ handle(rpc.removeAccount,async({accountId},{paseo})=>{await controller.remove(accountId,paseo);return{};});
+ handle(rpc.setFallback,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.fallback[provider]=enabled;});return{};});
+ handle(rpc.setDefaultAccount,async({provider,accountId},{paseo})=>{await controller.ensureRuntime(paseo);await controller.setDefault(provider,accountId);return{};});
+ handle(rpc.startLogin,async({accountId,mode},{paseo})=>{await controller.ensureRuntime(paseo);return controller.startLogin(paseo,accountId,mode);});
+ handle(rpc.getLoginStatus,async({accountId,sessionId})=>controller.getLoginStatus(accountId,sessionId));
+ handle(rpc.submitLoginCode,async({accountId,sessionId,code})=>controller.submitLoginCode(accountId,sessionId,code));
+ handle(rpc.checkLogin,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return controller.finishLogin(accountId);});
+ handle(rpc.cancelLogin,async({accountId,sessionId},{paseo})=>{await controller.ensureRuntime(paseo);return controller.cancelLogin(paseo,accountId,sessionId);});
+ handle(rpc.prepareSwitch,async({agentId,accountId},{paseo})=>{continuation.invalidate(agentId);await controller.ensureRuntime(paseo);const result=await controller.switcher(paseo).prepare(agentId,accountId);observation.refreshAgent(agentId);return result;});
+ handle(rpc.applySwitch,async({agentId,accountId},{paseo})=>{
   continuation.invalidate(agentId);
   await controller.ensureRuntime(paseo);
   // The registry as the agent left it: the note names the account from its binding.
@@ -60,14 +62,8 @@ export default function contribute(server:PluginServerContext){
    });
    if(switched)void appendAccountNote(paseo,agentId,switched);
   }
+  observation.refreshAgent(agentId);
   return binding;
- });
- type AgentSnapshot=NonNullable<Awaited<ReturnType<ReturnType<PaseoApi["agents"]["ref"]>["refresh"]>>>["agent"];
- const recoveryAgent=(a:AgentSnapshot):RecoveryAgent=>({
-  id:a.id,provider:a.provider,cwd:a.cwd,model:a.runtimeInfo?.model||a.model||null,
-  sessionId:a.persistence?.sessionId??null,workspaceId:a.workspaceId??null,status:a.status,
-  activeTurn:!!a.activeTurn,activeTurnId:a.activeTurn?.turnId??null,activeTurnStartedAt:a.activeTurn?.startedAt??null,
-  pendingPermissions:Array.isArray(a.pendingPermissions)?a.pendingPermissions:null,archived:!!a.archivedAt,lastUserMessageAt:a.lastUserMessageAt??null,
  });
  const continuation=new ContinuationCoordinator(new ContinuationLedger(controller.store.root),{
   read:async(paseo,id)=>{
@@ -85,15 +81,19 @@ export default function contribute(server:PluginServerContext){
   send:async(paseo,id,messageId)=>{await paseo.agents.ref(id).send("Continue.",{messageId,activeTurnBehavior:"steer"});},
   row:appendFailoverRow,
   now:Date.now,
+  permitsRecovery:(paseo,id)=>observation.permitsRecovery(paseo,id),
+  log:(agentId,code)=>console.info(JSON.stringify({kind:"quota_recovery",agentId,code})),
  });
- server.handle(rpc.setAutoFailover,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.autoFailover[provider]=enabled;});return{};});
- server.handle(rpc.applyFailover,async(input,{paseo})=>{
+ const observation=new ContinuationObservation(continuation);
+ const observe=(paseo:PaseoApi)=>{void observation.ensure(paseo);};
+ handle(rpc.setAutoFailover,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.autoFailover[provider]=enabled;});return{};});
+ handle(rpc.applyFailover,async(input,{paseo})=>{
   try{await continuation.apply(paseo,input);return{};}
   catch(error){if(error instanceof SwitchRefusal)throw error;console.error("Account recovery stopped; inspect Accounts.");throw new Error(SWITCH_FAILED);}
  });
- server.handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
- server.handle(rpc.listUsage,async({visible},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.list({visible}),checksOff:!await controller.usage.checksEnabled()};});
- server.handle(rpc.refreshUsage,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.refresh(accountId),checksOff:!await controller.usage.checksEnabled()};});
+ handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
+ handle(rpc.listUsage,async({visible},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.list({visible}),checksOff:!await controller.usage.checksEnabled()};});
+ handle(rpc.refreshUsage,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.refresh(accountId),checksOff:!await controller.usage.checksEnabled()};});
  // Paseo's Usage view lists the managed accounts too; a daemon before 0.11 has no usage sources, and the Accounts screen still shows the same limits.
  registerPaseoUsage(server,controller);
  const removeCreate=server.before("agent.create",({request})=>{
@@ -102,6 +102,7 @@ export default function contribute(server:PluginServerContext){
   return {...request,env:{...request.env,[MODEL_ENV]:model}};
  });
  const removeHook=server.before("agent.session_open",async({request},{paseo})=>{
+  observe(paseo);
   await controller.ready;
   // Neither hint from the creation reaches the CLI, on this or any later session of the agent.
   const {[MODEL_ENV]:model,[ACCOUNT_ENV]:account,...env}=request.env;
@@ -127,23 +128,17 @@ export default function contribute(server:PluginServerContext){
   if(pending)void appendAccountNote(paseo,agent.id,pending.note);
   await controller.observeAgentRegistration(agent.id);
  });
- const watchers=new Map<string,()=>void>();
  const removeTurnStarted=server.on("agent.turn_started",(event,{paseo})=>{
-  continuation.started(event,paseo);
-  if(!watchers.has(event.agent.id)){
-   const id=event.agent.id;
-   watchers.set(id,paseo.agents.ref(id).subscribe(update=>{
-    if(update.kind==="remove")continuation.invalidate(id);
-    else continuation.activity(id,recoveryAgent(update.agent));
-   }));
-  }
+  observe(paseo);continuation.started(event,paseo);observation.refreshAgent(event.agent.id,false);
  });
  const removeTurnEnded=server.on("agent.turn_ended",(event,{paseo})=>{
+  observe(paseo);
+  if(event.agent.provider==="claude"&&event.outcome.kind==="canceled")observation.canceled(event.agent.id);
   // Detached: native reload and launch receipts can outlive the hook deadline. The coordinator owns cancellation.
   void continuation.ended(event,paseo).catch(()=>console.error("Account recovery stopped; inspect Accounts."));
  });
- const removePermission=server.on("agent.permission_requested",({agent})=>continuation.invalidate(agent.id));
- const removeArchived=server.on("agent.archived",({agent})=>continuation.invalidate(agent.id));
+ const removePermission=server.on("agent.permission_requested",({agent})=>{continuation.invalidate(agent.id);observation.refreshAgent(agent.id,false);});
+ const removeArchived=server.on("agent.archived",({agent})=>{continuation.invalidate(agent.id);observation.refreshAgent(agent.id,false);});
  const removeClosed=server.on("agent.closed",({agent})=>continuation.closed(agent.id));
- return async()=>{removeCreate();removeHook();removeCreated();removeTurnStarted();removeTurnEnded();removePermission();removeArchived();removeClosed();for(const remove of watchers.values())remove();watchers.clear();startNotes.clear();await continuation.stop();await controller.close();};
+ return async()=>{removeCreate();removeHook();removeCreated();removeTurnStarted();removeTurnEnded();removePermission();removeArchived();removeClosed();startNotes.clear();const stoppingObservation=observation.stop();await continuation.stop();await stoppingObservation;await controller.close();};
 }

@@ -9,6 +9,7 @@ import type { PaseoApi } from "../server/paseo-api";
 import type { UsageSnapshot } from "../shared/contracts";
 import { recoveryDecision } from "../server/failover";
 import { readClaudeTurnMessageId } from "../server/continuation-timeline";
+import { ContinuationObservation } from "../server/continuation-observation";
 import { parseClaudeQuota } from "../server/claude-quota";
 
 const paseo={} as PaseoApi;
@@ -52,6 +53,19 @@ describe("native quota continuation coordinator",()=>{
   expect(f.host.send).toHaveBeenCalledWith(paseo,"agent",expect.any(String));
   expect((await f.ledger.read())[0]).toMatchObject({state:"finished",sessionId:"native",turnId:"turn",resumes:true});
   expect(f.rows().map(r=>r.state)).toEqual(["switching","auto"]);
+ });
+ it("deduplicates hook/live errors and permits a new native error with a reused turn ID",async()=>{
+  const f=fixture();f.start();await f.end();f.view.accountId="source";
+  const baseline=await f.coordinator.capture(paseo,"agent");
+  await f.coordinator.live(paseo,baseline!,"msg_native_terminal","turn",NOW+1);
+  expect(f.host.send).toHaveBeenCalledTimes(1);
+  f.start();vi.mocked(f.host.claude).mockResolvedValue({errorId:"second-error",userId:"second-user"});await f.end();
+  expect((await f.ledger.read()).map(op=>op.errorId)).toEqual(["native-error","second-error"]);expect(f.host.send).toHaveBeenCalledTimes(2);
+ });
+ it("does not replay a pre-upgrade ambiguous record without an error ID",async()=>{
+  const ledger=new MemoryLedger(),f=fixture("claude",true,ledger);f.start();await f.end();f.view.accountId="source";
+  ledger.operations[0].key=JSON.stringify(["agent","native","turn"]);ledger.operations[0].errorId=null;ledger.operations[0].state="uncertain";
+  f.start();await f.end();expect(f.host.send).toHaveBeenCalledTimes(1);expect(ledger.operations).toHaveLength(1);
  });
  it("uses a matching daemon turn start instead of delayed hook arrival",async()=>{
   const f=fixture();f.view.agent.activeTurnId="turn";f.view.agent.activeTurnStartedAt=new Date(NOW-500).toISOString();f.start();await f.end();
@@ -234,5 +248,148 @@ describe("durable continuation ledger",()=>{
  it("rejects damaged journals instead of silently resetting deduplication",async()=>{
   const root=await mkdtemp(join(tmpdir(),"continuation-ledger-"));roots.push(root);await writeFile(join(root,"continuation-ledger.json"),'{}');
   await expect(new ContinuationLedger(root).read()).rejects.toThrow(/journal/);
+ });
+});
+
+// These observations are synthetic SDK callbacks, never real agents/providers.
+describe("owned live Claude observation",()=>{
+ function observedFixture(){
+  const f=fixture();
+  const listeners=new Set<(event:any)=>void>(),updates=new Set<(event:any)=>void>();
+  const releases=vi.fn(async()=>{}),directoryRelease=vi.fn(async()=>{});
+  let directoryCallbacks:any;
+  const snapshot=()=>({...structuredClone(f.view.agent),runtimeInfo:{model:f.view.agent.model},persistence:{sessionId:f.view.agent.sessionId},activeTurn:f.view.agent.activeTurn?{turnId:f.view.agent.activeTurnId,startedAt:at}:null});
+  const handle={refresh:vi.fn(async()=>({agent:snapshot()})),subscribe:vi.fn((cb:any)=>{updates.add(cb);return()=>updates.delete(cb);}),timeline:{subscribe:vi.fn((cb:any)=>{listeners.add(cb);return{ready:Promise.resolve(),release:async()=>{listeners.delete(cb);await releases();}};})}};
+  const directory={ready:Promise.resolve({}),subscribe:vi.fn((cb:any)=>{directoryCallbacks=cb;return()=>{};}),release:directoryRelease};
+  const api={agents:{ref:()=>handle,list:vi.fn(async()=>({entries:[{agent:snapshot()}],pageInfo:{hasMore:false},subscription:directory}))}} as unknown as PaseoApi;
+  const observer=new ContinuationObservation(f.coordinator,1);
+  f.host.permitsRecovery=(p,id)=>observer.permitsRecovery(p,id);
+  const emit=(event:any)=>{for(const cb of [...listeners])cb({agentId:"agent",timestamp:new Date(f.host.now()+10).toISOString(),event});};
+  const update=()=>{for(const cb of [...updates])cb({kind:"upsert",agent:snapshot()});};
+  const assistant=(id="msg_native_terminal",turnId?:string)=>emit({type:"timeline",provider:"claude",turnId,item:{type:"assistant_message",messageId:id,text:"synthetic"}});
+  return{...f,api,observer,emit,update,assistant,handle,releases,directoryRelease,listeners,snapshot,directory:()=>directoryCallbacks};
+ }
+ const tick=async()=>{await new Promise(resolve=>setTimeout(resolve,8));};
+ it("recovers a live background quota without hooks, through queued bookkeeping, only once",async()=>{
+  const f=observedFixture();
+  const session="e5f4ce10-01a8-4530-873b-cc22fd2b72cc",user="22734bb1-41bf-4967-96d6-ef975c569ad7",error="952db731-1f51-4fad-a320-f34af039c7bf",queued="6b4f701c-af83-4ed1-9ffd-b5c4da55a2bc";
+  f.view.agent.sessionId=session;
+  const rows=[{type:"user",uuid:user,parentUuid:null,turnOrigin:"task_notification",sessionId:session,timestamp:new Date(NOW-1000).toISOString(),message:{role:"user",content:"synthetic"}},
+   {type:"assistant",uuid:error,parentUuid:user,sessionId:session,timestamp:new Date(NOW+5).toISOString(),isApiErrorMessage:true,error:"rate_limit",message:{id:"msg_native_terminal",role:"assistant"}},
+   {type:"user",uuid:queued,parentUuid:error,sessionId:session,timestamp:new Date(NOW+26).toISOString(),queueTranscriptOnly:true,promptSource:"system",origin:{kind:"task-notification",producer:"session-task"},queueSkipAttachments:true,message:{role:"user",content:"synthetic"}}];
+  vi.mocked(f.host.claude).mockImplementation(async input=>parseClaudeQuota(rows.map(r=>JSON.stringify(r)).join("\n")+"\n",input));
+  await f.observer.ensure(f.api);
+  vi.mocked(f.host.switch).mockImplementation(async(_p,_id,target,op)=>{
+   await op.guard("beforeReload");f.coordinator.closed("agent");f.view.agent.status="closed";f.update();
+   f.emit({type:"thread_started",provider:"claude",sessionId:session});await op.guard("afterReload");
+   f.view.agent.status="idle";await op.guard("afterReceipt");f.view.accountId=target;await op.afterConfirmed();
+  });
+  f.setNow(NOW+20);f.assistant();await tick();f.assistant();await tick();
+  expect(f.host.claudeMessageId).not.toHaveBeenCalled();expect(f.host.refresh).toHaveBeenCalledTimes(1);expect(f.host.send).toHaveBeenCalledTimes(1);
+  expect((await f.ledger.read())[0]).toMatchObject({state:"finished",errorId:error});
+  await f.observer.stop();expect(f.releases).toHaveBeenCalled();expect(f.directoryRelease).toHaveBeenCalledTimes(1);
+ });
+ it("keeps canceled execution disarmed despite a late fresh error until explicit new input",async()=>{
+  const f=observedFixture();await f.observer.ensure(f.api);
+  f.emit({type:"turn_canceled",provider:"claude"});f.update();await tick();
+  f.setNow(NOW+100);f.assistant();await tick();expect(f.host.send).not.toHaveBeenCalled();
+  f.emit({type:"thread_started",provider:"claude",sessionId:"native"});f.assistant();await tick();expect(f.host.send).not.toHaveBeenCalled();
+  f.emit({type:"timeline",provider:"claude",item:{type:"user_message",messageId:"autonomous-user"}});await tick();f.assistant("late-user-error");await tick();expect(f.host.send).not.toHaveBeenCalled();
+  f.emit({type:"turn_started",provider:"claude",turnId:"autonomous"});await tick();f.assistant("late-error","autonomous");await tick();expect(f.host.send).not.toHaveBeenCalled();
+  f.view.agent.lastUserMessageAt=new Date(NOW+100).toISOString();f.update();f.emit({type:"timeline",provider:"claude",item:{type:"user_message",messageId:"external-user"}});await tick();f.assistant("new-error","new");await tick();expect(f.host.send).toHaveBeenCalledTimes(1);await f.observer.stop();
+ });
+ it.each(["replacement","subscription_restored","error","directory_snapshot","directory_error","close"])("keeps the stop tombstone through a new Entry after %s",async transition=>{
+  const f=observedFixture();await f.observer.ensure(f.api);f.emit({type:"turn_canceled",provider:"claude"});
+  if(transition==="directory_snapshot")f.directory().snapshot({entries:[{agent:f.snapshot()}]});
+  else if(transition==="directory_error"){f.directory().error(new Error("synthetic"));await f.observer.ensure(f.api);}
+  else if(transition==="close"){f.view.agent.status="closed";f.update();f.view.agent.status="idle";f.directory().update({type:"agent_update",payload:{kind:"upsert",agent:f.snapshot()}});}
+  else f.emit({type:transition,epoch:2,error:"synthetic"});
+  await tick();f.setNow(NOW+100);f.assistant("late-after-rebuild");await tick();
+  expect(f.handle.timeline.subscribe).toHaveBeenCalledTimes(2);expect(f.host.claude).not.toHaveBeenCalled();expect(f.host.send).not.toHaveBeenCalled();
+  f.view.agent.lastUserMessageAt=new Date(NOW+101).toISOString();f.update();await tick();f.assistant("new-input-error");await tick();expect(f.host.send).toHaveBeenCalledTimes(1);await f.observer.stop();
+ });
+ it("shares the user-stop gate with foreground hooks and autonomous SDK turn events",async()=>{
+  const f=observedFixture();f.view.agent.sessionId="bed6b174-dab0-4c3d-b6a2-17d41eb7ab32";
+  vi.mocked(f.host.claude).mockImplementation(async input=>parseClaudeQuota([
+   {type:"user",uuid:"5a15cc3f-bb1c-4c31-beca-70231044f091",parentUuid:null,sessionId:input.sessionId,timestamp:new Date(NOW-1).toISOString(),message:{role:"user",content:"synthetic"}},
+   {type:"assistant",uuid:"e24547ef-ea4f-44d3-b0a9-55b3ffbfbac5",parentUuid:"5a15cc3f-bb1c-4c31-beca-70231044f091",sessionId:input.sessionId,timestamp:new Date(NOW).toISOString(),isApiErrorMessage:true,error:"rate_limit",message:{id:input.messageId}}
+  ].map(row=>JSON.stringify(row)).join("\n")+"\n",input));
+  await f.observer.ensure(f.api);
+  f.observer.canceled("agent");f.event.outcome={kind:"canceled"};await f.end();
+  f.event.outcome={kind:"completed"};f.start();f.emit({type:"turn_started",provider:"claude",turnId:"turn"});
+  f.assistant("msg_native_terminal","turn");await f.end();await tick();expect(f.host.switch).not.toHaveBeenCalled();expect(f.host.send).not.toHaveBeenCalled();
+  f.view.agent.lastUserMessageAt=new Date(NOW+1).toISOString();f.update();f.start();
+  await f.end();expect(f.host.switch).toHaveBeenCalledTimes(1);expect(f.host.send).toHaveBeenCalledTimes(1);await f.observer.stop();
+ });
+ it("holds a hook cancellation received before discovery through the first snapshot",async()=>{
+  const f=observedFixture();f.observer.canceled("agent");f.observer.canceled("agent");
+  await f.observer.ensure(f.api);f.assistant("late-after-hook");await tick();expect(f.host.claude).not.toHaveBeenCalled();expect(f.host.send).not.toHaveBeenCalled();
+  f.view.agent.lastUserMessageAt=new Date(NOW+1).toISOString();f.update();await tick();f.assistant("fresh-input-error");await tick();expect(f.host.send).toHaveBeenCalledTimes(1);await f.observer.stop();
+ });
+ it("rejects a rebroadcast native error older than the armed baseline",async()=>{
+  const f=observedFixture();const session="2898bff3-0ef9-4bd6-9796-dd72775741a5",user="f0582817-f5f7-48b5-a414-aefc85852517",error="d1fb2088-87ee-4ea2-9745-b1937c448cec";f.view.agent.sessionId=session;
+  const rows=[{type:"user",uuid:user,parentUuid:null,sessionId:session,timestamp:new Date(NOW-10).toISOString(),message:{role:"user",content:"synthetic"}},{type:"assistant",uuid:error,parentUuid:user,sessionId:session,timestamp:new Date(NOW-1).toISOString(),isApiErrorMessage:true,error:"rate_limit",message:{id:"old-error"}}];
+  vi.mocked(f.host.claude).mockImplementation(async input=>parseClaudeQuota(rows.map(r=>JSON.stringify(r)).join("\n")+"\n",input));
+  await f.observer.ensure(f.api);f.assistant("old-error");await tick();expect(f.host.refresh).not.toHaveBeenCalled();expect(f.host.send).not.toHaveBeenCalled();await f.observer.stop();
+ });
+ it("snapshots/history and ordinary assistants never refresh quota",async()=>{
+  const f=observedFixture();vi.mocked(f.host.claude).mockResolvedValue(null);
+  await f.observer.ensure(f.api);await tick();expect(f.host.claude).not.toHaveBeenCalled();
+  f.assistant();await tick();expect(f.host.claude).toHaveBeenCalledTimes(1);expect(f.host.refresh).not.toHaveBeenCalled();await f.observer.stop();
+ });
+ it.each(["user","permission","turn","snapshot_turn","model","session","archive"])("cancels pending evidence for %s activity",async kind=>{
+  const f=observedFixture();await f.observer.ensure(f.api);f.assistant();
+  if(kind==="user")f.emit({type:"timeline",provider:"claude",item:{type:"user_message",messageId:"new-user"}});
+  if(kind==="permission")f.emit({type:"permission_requested"});
+  if(kind==="turn")f.emit({type:"turn_started",provider:"claude",turnId:"new"});
+  if(kind==="snapshot_turn"){f.view.agent.activeTurn=true;f.view.agent.activeTurnId="different";f.view.agent.status="running";f.update();}
+  if(kind==="model")f.view.agent.model="new";
+  if(kind==="session")f.view.agent.sessionId="new";
+  if(kind==="archive")f.view.agent.archived=true;
+  if(["model","session","archive"].includes(kind))f.update();
+  await tick();expect(f.host.send).not.toHaveBeenCalled();await f.observer.stop();
+ });
+ it("reconnect discards candidates, establishes a fresh ready and accepts only future callbacks",async()=>{
+  const f=observedFixture();await f.observer.ensure(f.api);f.assistant();f.emit({type:"subscription_restored"});await tick();
+  expect(f.host.send).not.toHaveBeenCalled();expect(f.handle.timeline.subscribe).toHaveBeenCalledTimes(2);
+  f.assistant();await tick();expect(f.host.send).toHaveBeenCalledTimes(1);await f.observer.stop();
+ });
+ it("preserves its own same-session thread start through reload and records accepted send once",async()=>{
+  const f=observedFixture();await f.observer.ensure(f.api);
+  vi.mocked(f.host.switch).mockImplementation(async(_p,_id,target,op)=>{
+   await op.guard("beforeReload");f.coordinator.closed("agent");f.view.agent.status="closed";f.update();
+   f.emit({type:"thread_started",provider:"claude",sessionId:"native"});
+   await op.guard("afterReload");f.view.agent.status="idle";await op.guard("afterReceipt");f.view.accountId=target;await op.afterConfirmed();
+  });
+  vi.mocked(f.host.send).mockImplementation(async()=>{f.emit({type:"turn_started",provider:"claude",turnId:"own-continuation"});});
+  f.assistant();await tick();expect(f.host.send).toHaveBeenCalledTimes(1);expect((await f.ledger.read())[0].state).toBe("finished");
+  f.assistant();await tick();expect(f.host.send).toHaveBeenCalledTimes(1);await f.observer.stop();
+ });
+ it("rearms after its accepted send starts a new turn before the RPC settles",async()=>{
+  const f=observedFixture();await f.observer.ensure(f.api);
+  vi.mocked(f.host.claude).mockImplementation(async input=>({errorId:input.messageId,userId:"synthetic-user"}));
+  vi.mocked(f.host.send).mockImplementation(async()=>{
+   f.view.agent.lastUserMessageAt=new Date(f.host.now()+1).toISOString();f.view.agent.status="running";f.view.agent.activeTurn=true;
+   f.coordinator.started({...f.event,turnId:"continuation"},f.api);
+   f.emit({type:"turn_started",provider:"claude",turnId:"continuation"});
+   f.emit({type:"timeline",provider:"claude",turnId:"continuation",item:{type:"user_message",messageId:"own-user"}});f.update();
+  });
+  f.assistant("first-error");await tick();expect(f.host.send).toHaveBeenCalledTimes(1);
+  f.view.agent.status="idle";f.view.agent.activeTurn=false;
+  f.view.registry.accounts.push({...f.view.registry.accounts[1],id:"third",identityKey:"third",home:"/profiles/third"});
+  f.setReadings([f.usage("source",10),f.usage("target",100),f.usage("third",10)]);
+  // No fresh directory event: only the next live background assistant arrives.
+  f.assistant("second-error");await tick();expect(f.host.send).toHaveBeenCalledTimes(2);expect(f.view.accountId).toBe("third");await f.observer.stop();
+ });
+ it("waits for a foreground running-to-idle transition without replacing its observation",async()=>{
+  const f=observedFixture();f.view.agent.status="running";f.view.agent.activeTurn=true;f.view.agent.activeTurnId="turn";
+  f.start();await f.observer.ensure(f.api);f.assistant("msg_native_terminal","turn");await tick();expect(f.host.send).not.toHaveBeenCalled();
+  f.view.agent.status="idle";f.view.agent.activeTurn=false;f.update();await tick();expect(f.host.send).toHaveBeenCalledTimes(1);await f.end();expect(f.host.send).toHaveBeenCalledTimes(1);await f.observer.stop();
+ });
+ it("stop releases an in-flight ready subscription and never arms it later",async()=>{
+  const f=observedFixture();let ready!:()=>void;
+  const promise=new Promise<void>(resolve=>{ready=resolve;});
+  vi.mocked(f.handle.timeline.subscribe).mockImplementation((cb:any)=>{f.listeners.add(cb);return{ready:promise,release:async()=>{f.listeners.delete(cb);f.releases();ready();}};});
+  const start=f.observer.ensure(f.api);await tick();await f.observer.stop();await start;f.assistant();await tick();expect(f.host.send).not.toHaveBeenCalled();expect(f.releases).toHaveBeenCalled();
  });
 });

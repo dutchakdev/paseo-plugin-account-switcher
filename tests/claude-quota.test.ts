@@ -43,6 +43,17 @@ describe("Claude native quota evidence", () => {
     expect(parseClaudeQuota(text(user, error), { ...input, messageId: nextId })).toBeNull();
     expect(parseClaudeQuota(text(user, { ...error, timestamp: at(3100) }), input)).toBeNull();
   });
+  it("accepts the exact hydrated record ID and only strict queued bookkeeping after the error", () => {
+    const queued={...user,uuid:nextId,parentUuid:errorId,timestamp:at(3021),queueTranscriptOnly:true,promptSource:"system",origin:{kind:"task-notification",producer:"session-task"},queueSkipAttachments:true};
+    expect(parseClaudeQuota(text(user,error,queued),{...input,messageId:errorId})).toEqual(proof);
+    for(const changed of [{queueTranscriptOnly:false},{promptSource:"user"},{origin:{kind:"task-notification",producer:"other"}},{queueSkipAttachments:false},{queueTranscriptOnly:undefined},{turnOrigin:"task_notification",queueTranscriptOnly:undefined}])
+      expect(parseClaudeQuota(text(user,error,{...queued,...changed}),input)).toBeNull();
+  });
+  it("requires live errors to be no older than the armed observation, without changing foreground evidence",()=>{
+    expect(parseClaudeQuota(text(user,error),{...input,minErrorAt:2001})).toBeNull();
+    expect(parseClaudeQuota(text(user,error),{...input,minErrorAt:2000})).toEqual(proof);
+    expect(parseClaudeQuota(text(user,error),{...input,minErrorAt:NaN})).toBeNull();
+  });
   it("uses the exact terminal assistant ID even when hook delivery lagged the prompt", () => {
     expect(parseClaudeQuota(text(user, error), { ...input, startedAt: 2100 })).toEqual(proof);
   });

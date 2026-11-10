@@ -1,7 +1,15 @@
 # Verification
 
-Last checked: **2026-11-10**. These results describe observed checks, not a guarantee
+Last checked: **2026-11-11**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
+
+## Live background Claude quota follow-up, 2026-11-11
+
+A metadata-only investigation found that Claude background task notifications can reach a structured quota error without new Paseo foreground turn hooks. A subsequent transcript-only queue flush must not be mistaken for a newly executed user input. No conversation bodies, credentials, local profile paths or raw provider logs are included here or in fixtures.
+
+Synthetic regressions combine the owned live observer, real coordinator and native parser: an existing idle session receives a future assistant error without hooks, with an exact queued bookkeeping suffix, fresh source exhaustion and a distinct replacement with room. Its own close/same-session thread start/launch receipt leads to one continuation. Reconnect/history, ordinary assistants, newer inputs, stop tombstones, stale native timestamps, session/model changes, duplicate native errors, reused foreground turn IDs and shutdown are covered without real provider calls. Foreground hooks and live callbacks share stop markers, including markers captured before discovery and retained across six forms of observation-handle replacement. They require fresh host user activity or a new session to unlock; autonomous SDK input alone is insufficient.
+
+A read-only SDK smoke check on Paseo 0.15.4 confirmed owned directory discovery of existing Claude agents, timeline readiness, baseline arming and cleanup with a substitute coordinator. It performed no quota refresh, account switch or send. Separate bounded in-memory replay accepted the observed structured error both before and after the exact queue-only suffix, using either native assistant ID representation. These checks establish interface/evidence compatibility, not an end-to-end recovery of a real exhausted subscription. `npm run check` passed for this follow-up: build, typecheck and **652/652 tests in 45 files**, including the review fixes for stop-marker retention and the shared hook/live gate. The focused parser/coordinator/hook suite also passed **126/126**. This is a local check, not a fresh cross-platform CI run. Independent review passed with 11 targeted lifecycle/cancellation regressions. Release validation and the 63-file npm tarball check passed, including the new observer module; packing restored the source manifest. A plugin-only hot reload then reported Accounts running with all five existing Claude observations armed. Account settings and the affected agent’s account, model, native session and last user message remained unchanged; no historical continuation was sent.
 
 ## Verified quota continuation, 2026-11-10
 

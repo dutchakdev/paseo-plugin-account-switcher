@@ -9,6 +9,8 @@
 ### Fixed
 
 - Recover Claude quota interruptions reported as completed only when the current turn's terminal native error and fresh account-wide exhaustion agree. Ordinary completed turns and unrelated failures no longer trigger quota switching.
+- Observe future live Claude background quota errors even when no foreground turn hooks are emitted. Ignore only strictly identified transcript-only task queue bookkeeping after the terminal error, while preserving real input and cancellation guards.
+- Deduplicate Claude recovery by exact native error UUID across foreground/background events and reused turn IDs. Preserve user-stop markers through subscription reconnects, and rearm observation after a completed switch without replaying historical errors.
 - Require a fresh replacement with a distinct verified identity and known quota, preserve the native session and model, and recheck activity and startup receipts around recovery.
 - Persist quota recovery and continuation intent, keep the switch lock through delivery, and refuse stale offers or uncertain replays. Manual account switching still sends no continuation prompt.
 

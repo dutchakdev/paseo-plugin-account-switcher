@@ -13,15 +13,18 @@ export interface RecoveryAgent {
 }
 export interface RecoveryView {agent:RecoveryAgent;accountId:string|null;registry:Registry}
 export interface RecoveryEvent {agent:{id:string;provider:string;cwd:string;parentAgentId:string|null};turnId:string|null;outcome:{kind:string;error?:{code?:string;message:string}}}
+export interface RecoveryBaseline {view:RecoveryView;generation:number;capturedAt:number}
 export interface ContinuationHost {
  read(paseo:PaseoApi,id:string):Promise<RecoveryView|null>;
  refresh(paseo:PaseoApi):Promise<UsageSnapshot[]|null>;
  claudeMessageId(paseo:PaseoApi,id:string,turnId:string,check:()=>void):Promise<string|null>;
- claude(input:{configDir:string;cwd:string;sessionId:string;messageId:string;startedAt:number;endedAt:number}):Promise<{errorId:string;userId:string}|null>;
+ claude(input:{configDir:string;cwd:string;sessionId:string;messageId:string;startedAt:number;endedAt:number;minErrorAt?:number}):Promise<{errorId:string;userId:string}|null>;
  switch(paseo:PaseoApi,id:string,target:string,operation:RecoverySwitch):Promise<unknown>;
  send(paseo:PaseoApi,id:string,messageId:string):Promise<void>;
  row(paseo:PaseoApi,id:string,row:FailoverRow):Promise<unknown>;
  now():number;
+ log?:(agentId:string,code:string)=>void;
+ permitsRecovery?:(paseo:PaseoApi,id:string)=>Promise<boolean>;
 }
 type Observed = {turnId:string;startedAt:number;generation:number;cwd:string;baseline:Promise<RecoveryView|null>};
 type Context = {quota?:{usage:UsageSnapshot[];since:number};observed:Observed;base:RecoveryView;generation:number;targetGeneration:number|null;operation:ContinuationOperation;automatic:boolean};
@@ -34,12 +37,41 @@ export class ContinuationCoordinator {
  private stopped=false;
  private readonly generations=new Map<string,number>();
  private readonly observed=new Map<string,Observed>();
+ private readonly endedTurns=new Map<string,string>();
+ private readonly settlers=new Set<(id:string)=>void>();
+ private readonly reports=new Map<string,number>();
  private readonly contexts=new Map<string,Context>();
  private readonly active=new Set<string>();
  private readonly pending=new Set<Promise<unknown>>();
  // Only one close associated with this operation's native reload may be ignored.
  private readonly reloading=new Map<string,{key:string;closeObserved:boolean}>();
  constructor(private readonly ledger:OperationLedger,private readonly host:ContinuationHost){}
+ diagnostic(id:string,code:string):void{const key=id+":"+code,now=this.host.now();if(now-(this.reports.get(key)??-Infinity)<60_000)return;this.reports.set(key,now);this.host.log?.(id,code);}
+ onSettled(callback:(id:string)=>void):()=>void{this.settlers.add(callback);return()=>this.settlers.delete(callback);}
+ private settled(id:string):void{for(const callback of this.settlers)callback(id);}
+ endedTurn(id:string,turnId:string|null|undefined):boolean{return !!turnId&&this.endedTurns.get(id)===turnId;}
+ currentTurn(id:string):string|null{return this.observed.get(id)?.turnId??null;}
+ isRecovering(id:string):boolean{return this.active.has(id);}
+ ownsReload(id:string):boolean{return this.reloading.has(id);}
+ matches(baseline:RecoveryBaseline,agent:RecoveryAgent):boolean{return this.sameAgent(baseline.view.agent,agent);}
+ async capture(paseo:PaseoApi,id:string):Promise<RecoveryBaseline|null>{
+  if(this.stopped)return null;
+  const generation=this.generations.get(id)??0;this.generations.set(id,generation);
+  const view=await this.host.read(paseo,id);this.alive(id,generation);
+  if(!view||!["idle","error","running"].includes(view.agent.status)||view.agent.archived||!view.agent.model||!view.agent.sessionId||!view.agent.workspaceId||!view.agent.cwd||!view.agent.lastUserMessageAt||!Array.isArray(view.agent.pendingPermissions)||view.agent.pendingPermissions.length)return null;
+  const source=view.accountId?this.account(view,view.accountId):null;
+  if(view.agent.provider!=="claude"||!source?.identityKey||source.loginToken||source.authStatus!=="ready"||!view.registry.integration.enabled||!view.registry.integration.providers.includes("claude"))return null;
+  return{view,generation,capturedAt:this.host.now()};
+ }
+ live(paseo:PaseoApi,baseline:RecoveryBaseline,messageId:string,turnId:string|null,at:number):Promise<void>{
+  const id=baseline.view.agent.id;
+  if(this.stopped||this.generations.get(id)!==baseline.generation||at<baseline.capturedAt||this.active.has(id))return Promise.resolve();
+  const observed:Observed={turnId:turnId||"native:"+messageId,startedAt:baseline.capturedAt,generation:baseline.generation,cwd:baseline.view.agent.cwd,baseline:Promise.resolve(baseline.view)};
+
+  const event:RecoveryEvent={agent:{id,provider:"claude",cwd:observed.cwd,parentAgentId:null},turnId:observed.turnId,outcome:{kind:"completed"}};
+  this.active.add(id);
+  return this.track(this.examine(event,paseo,observed,this.host.now(),messageId).catch(()=>this.diagnostic(id,"baseline_changed")).finally(()=>{this.active.delete(id);this.reloading.delete(id);this.settled(id);}));
+ }
  invalidate(id:string):void{this.generations.set(id,(this.generations.get(id)??0)+1);this.observed.delete(id);for(const [row,c] of this.contexts)if(c.operation.agentId===id)this.contexts.delete(row);}
  closed(id:string):void{
   const own=this.reloading.get(id);
@@ -47,6 +79,7 @@ export class ContinuationCoordinator {
   this.invalidate(id);
  }
  started(event:Pick<RecoveryEvent,"agent"|"turnId">,paseo:PaseoApi):void{
+  this.endedTurns.delete(event.agent.id);
   this.invalidate(event.agent.id);
   if(this.stopped||!event.turnId||!["claude","codex"].includes(event.agent.provider))return;
   // Set the clock and generation synchronously: turn.before is a notification, not a waiting hook.
@@ -60,7 +93,7 @@ export class ContinuationCoordinator {
   const context=[...this.contexts.values()].find(c=>c.operation.agentId===id&&c.generation===observed.generation);
   void (context?Promise.resolve(context.base):observed.baseline).then(base=>{
    if(this.observed.get(id)!==observed||!base)return;
-   if(!this.sameAgent(base.agent,agent)||agent.archived||agent.activeTurn||agent.pendingPermissions?.length||(!this.reloading.has(id)&&agent.status==="closed"))this.invalidate(id);
+   if(!this.sameAgent(base.agent,agent)||agent.archived||(agent.activeTurn&&(!agent.activeTurnId||this.endedTurns.get(id)!==agent.activeTurnId))||agent.pendingPermissions?.length||(!this.reloading.has(id)&&agent.status==="closed"))this.invalidate(id);
   });
  }
  private alive(id:string,generation:number):void{
@@ -98,45 +131,56 @@ export class ContinuationCoordinator {
  ended(event:RecoveryEvent,paseo:PaseoApi):Promise<void>{
   const id=event.agent.id,observed=this.observed.get(id),endedAt=this.host.now();
   if(event.outcome.kind==="canceled"){this.invalidate(id);return Promise.resolve();}
-  if(this.stopped||!observed||!event.turnId||observed.turnId!==event.turnId||this.active.has(id))return Promise.resolve();
+  if(this.stopped||!observed||!event.turnId||observed.turnId!==event.turnId){this.diagnostic(id,"no_observed");return Promise.resolve();}
+  this.endedTurns.set(id,event.turnId);
+  if(this.active.has(id))return Promise.resolve();
   if(event.agent.provider==="codex"&&!explicitCodexQuota(event.outcome))return Promise.resolve();
   if(event.agent.provider!=="codex"&&!(event.agent.provider==="claude"&&["completed","failed"].includes(event.outcome.kind)))return Promise.resolve();
   this.active.add(id);
-  return this.track(this.examine(event,paseo,observed,endedAt).catch(()=>{/* Unknown state must not recover. */}).finally(()=>{this.active.delete(id);this.reloading.delete(id);}));
+  return this.track(this.examine(event,paseo,observed,endedAt).catch(()=>this.diagnostic(id,"baseline_changed")).finally(()=>{this.active.delete(id);this.reloading.delete(id);this.settled(id);}));
  }
- private async examine(event:RecoveryEvent,paseo:PaseoApi,observed:Observed,endedAt:number):Promise<void>{
+ private async examine(event:RecoveryEvent,paseo:PaseoApi,observed:Observed,endedAt:number,liveAnchor?:string):Promise<void>{
   const id=event.agent.id;this.alive(id,observed.generation);
+  if(this.host.permitsRecovery&&!await this.host.permitsRecovery(paseo,id)){this.diagnostic(id,"user_stopped");return;}
+  this.alive(id,observed.generation);
   const started=await observed.baseline;this.alive(id,observed.generation);
   const actualStart=started?.agent.activeTurnStartedAt?Date.parse(started.agent.activeTurnStartedAt):NaN;
-  if(started?.agent.activeTurnId===event.turnId&&Number.isFinite(actualStart)&&actualStart>0&&actualStart<=observed.startedAt+1000)observed.startedAt=actualStart;
+  if(!liveAnchor&&started?.agent.activeTurnId===event.turnId&&Number.isFinite(actualStart)&&actualStart>0&&actualStart<=observed.startedAt+1000)observed.startedAt=actualStart;
   const live=await this.host.read(paseo,id);this.alive(id,observed.generation);
-  if(!started||!this.safe(live)||!this.sameAgent(started.agent,live.agent)||observed.cwd!==live.agent.cwd||started.accountId!==live.accountId||!live.accountId||!live.registry.integration.enabled||!live.registry.integration.providers.includes(live.agent.provider as Provider))return;
+  if(!started||!this.safe(live)||!this.sameAgent(started.agent,live.agent)||observed.cwd!==live.agent.cwd||started.accountId!==live.accountId||!live.accountId||!live.registry.integration.enabled||!live.registry.integration.providers.includes(live.agent.provider as Provider)){this.diagnostic(id,"unsafe_end");return;}
+  if(liveAnchor){this.observed.set(id,observed);if(event.turnId)this.endedTurns.set(id,event.turnId);}
   const source=this.account(live,live.accountId),startedSource=started.accountId?this.account(started,started.accountId):null;
   if(!source?.identityKey||source.generation!==startedSource?.generation||source.identityKey!==startedSource.identityKey||source.loginToken||source.authStatus!=="ready"||source.provider!==event.agent.provider)return;
-  const key=JSON.stringify([id,live.agent.sessionId,event.turnId]),rowId=`${FAILOVER_KIND}-${hash(key)}`;
+  const legacyKey=JSON.stringify([id,live.agent.sessionId,event.turnId]);
   let records=await this.ledger.read();this.alive(id,observed.generation);
-  if(records.some(op=>op.key===key))return;
   let evidence:{errorId:string;userId:string}|null=null;
   if(source.provider==="claude"){
-   const nativeMessageId=await this.host.claudeMessageId(paseo,id,event.turnId!,()=>this.alive(id,observed.generation));this.alive(id,observed.generation);
+   const nativeMessageId=liveAnchor??await this.host.claudeMessageId(paseo,id,event.turnId!,()=>this.alive(id,observed.generation));this.alive(id,observed.generation);
    // The terminal assistant ID is bound to this Paseo turn, then to the native terminal error and parent chain.
    const current=await this.host.read(paseo,id);this.alive(id,observed.generation);
-   if(!nativeMessageId||!this.safe(current)||!this.sameAgent(live.agent,current.agent)||current.accountId!==source.id)return;
-   evidence=await this.host.claude({configDir:source.home,cwd:live.agent.cwd,sessionId:live.agent.sessionId!,messageId:nativeMessageId,startedAt:observed.startedAt,endedAt});
+   if(!nativeMessageId){this.diagnostic(id,"anchor_missing");return;}
+   if(!this.safe(current)||!this.sameAgent(live.agent,current.agent)||current.accountId!==source.id){this.diagnostic(id,"unsafe_end");return;}
+   evidence=await this.host.claude({configDir:source.home,cwd:live.agent.cwd,sessionId:live.agent.sessionId!,messageId:nativeMessageId,startedAt:observed.startedAt,endedAt,...(liveAnchor?{minErrorAt:observed.startedAt}:{})});
    this.alive(id,observed.generation);
-   if(!evidence)return;
+   if(!evidence){this.diagnostic(id,"native_mismatch");return;}
   }
+  // Claude turn IDs restart after native reload. Exact native errors, including
+  // old records with errorId, own deduplication across foreground and live paths.
+  const key=evidence?JSON.stringify(["claude-quota",id,live.agent.sessionId,evidence.errorId]):legacyKey;
+  const rowId=`${FAILOVER_KIND}-${hash(key)}`;
+  if(records.some(op=>op.key===key||(evidence&&op.agentId===id&&op.sessionId===live.agent.sessionId&&
+    (op.errorId===evidence.errorId||(!op.errorId&&["sending","uncertain"].includes(op.state)))))){this.diagnostic(id,"duplicate");return;}
   const placeholder:ContinuationOperation={key,rowId,agentId:id,sessionId:live.agent.sessionId!,turnId:event.turnId!,provider:source.provider,fromId:source.id,toId:null,fromIdentity:hash(source.identityKey),toIdentity:null,createdAt:this.host.now(),updatedAt:this.host.now(),attemptedAt:null,state:"intent",messageId:randomUUID(),resumes:true,resetsAt:null,errorId:evidence?.errorId??null,userId:evidence?.userId??null};
   const c:Context={observed,base:live,generation:observed.generation,targetGeneration:null,operation:placeholder,automatic:live.registry.autoFailover[source.provider]};
   await this.check(paseo,c);
   const since=this.host.now(),usage=await this.host.refresh(paseo);await this.check(paseo,c);
-  if(!usage)return;
+  if(!usage){this.diagnostic(id,"quota_unavailable");return;}
   c.quota={usage,since};
   records=await this.ledger.read();await this.check(paseo,c);
   const recent=records.filter(op=>op.agentId===id&&op.attemptedAt!==null&&this.host.now()-op.attemptedAt<HOUR);
   const excluded=live.registry.accounts.filter(a=>a.identityKey&&recent.some(op=>op.fromIdentity===hash(a.identityKey!))).map(a=>a.identityKey!);
   const decision=recoveryDecision({currentId:source.id,accounts:live.registry.accounts,usage,model:live.agent.model,now:this.host.now(),since,excludedIdentities:excluded});
-  if(!decision)return;
+  if(!decision){this.diagnostic(id,"quota_unavailable");return;}
   const target=decision.kind==="offer"?live.registry.accounts.find(a=>a.id===decision.toId):null;
   c.operation={...placeholder,toId:target?.id??null,toIdentity:target?.identityKey?hash(target.identityKey):null,resetsAt:decision.resetsAt};
   c.targetGeneration=target?.generation??null;
@@ -167,7 +211,7 @@ export class ContinuationCoordinator {
    if(record?.state!=="intent")throw unavailable();
    await this.track(this.perform(paseo,c,true));
   }
-  finally{this.active.delete(input.agentId);this.reloading.delete(input.agentId);}
+  finally{this.active.delete(input.agentId);this.reloading.delete(input.agentId);this.settled(input.agentId);}
  }
  private async perform(paseo:PaseoApi,c:Context,refresh:boolean):Promise<void>{
   const op=c.operation;
