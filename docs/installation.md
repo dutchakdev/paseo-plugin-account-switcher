@@ -6,7 +6,7 @@
 
 Account Switcher runs on the machine hosting your Paseo daemon. Its UI appears in connected Paseo clients; credentials and provider processes stay on the daemon.
 
-Use a macOS or Linux daemon, Paseo **0.11.0 or newer** on both daemon and client, and Node.js **22.12.0 or newer**. Beta releases are included: Paseo also checks a prerelease against its stable core version, so a beta of any release after 0.11.0 satisfies the manifest's `>=0.11.0` range. The exception is the 0.11.0 betas: they predate the manifest `icon` field and refuse the manifest. Paseo 0.8 to 0.10 refuse it too; they can stay on 0.5.0, the last release for them (see [Git installations](#git-installations)). See [Paseo's compatibility rules](https://paseo.sh/docs/plugins/reference#requirements).
+Use a macOS or Linux daemon, Paseo **0.15.4 or newer** on both daemon and client, and Node.js **22.12.0 or newer**. Verified quota continuation raises the minimum from Paseo 0.11 to 0.15.4. Hosts on 0.11–0.15.3 can keep Account Switcher 0.10.2. Earlier Paseo releases and the 0.11.0 betas that predate the manifest `icon` field can keep 0.5.0 (see [Git installations](#git-installations)). See [Paseo's compatibility rules](https://paseo.sh/docs/plugins/reference#requirements).
 
 Install the official `paseo` CLI and at least one of `claude` or `codex` for the daemon's operating-system user. Applying an account reloads the agent with the CLI Paseo names in `PASEO_CLI`, which the desktop app sets to its bundled CLI, or, when that is unset or cannot start, with `paseo` from the daemon's PATH. Each provider CLI you want to use must be discoverable through the daemon's PATH or its configured Paseo provider command. A provider whose CLI is missing gets no launcher: Accounts says so and hides its **Current CLI** account. After installing it, reload the plugin, then select **Enable** in that provider's section if switching is already on for the other.
 
@@ -16,7 +16,7 @@ Enable **Settings → Plugins → Enable plugins** on the target host. Paseo plu
 
 ## Plugin directory installations
 
-On Paseo 0.11.0 or a later release, install the reviewed version listed on [paseo.sh](https://paseo.sh/plugins/dutchakdev/account-switcher):
+On Paseo 0.15.4 or a later release, install the reviewed version listed on [paseo.sh](https://paseo.sh/plugins/dutchakdev/account-switcher):
 
 ```sh
 paseo plugin add dutchakdev/account-switcher --host 127.0.0.1:6767
@@ -131,7 +131,7 @@ paseo plugin enable account-switcher --host 127.0.0.1:6767
 
 | Symptom | What to check |
 | --- | --- |
-| Accounts is missing | Confirm the selected host, Paseo 0.11.0 or newer (including beta releases after 0.11.0) on the app and daemon, the global plugin switch, and `running` status. |
+| Accounts is missing | Confirm the selected host, Paseo 0.15.4 or newer on the app and daemon, the global plugin switch, and `running` status. |
 | Provider CLI not found | Neither CLI was found. Check the installations and the daemon user's PATH or configured provider commands. A terminal shell's PATH can differ from a background daemon's. |
 | A provider says its CLI was not found | That provider is skipped; the other keeps working. Install its CLI or configure its command, reload the plugin, then select **Enable** in its section. |
 | Authentication override error | Check provider settings, CLI arguments, and the daemon environment for API keys, custom endpoints, or alternate providers. Use subscription authentication for this plugin. Do not paste secret values into a report. |

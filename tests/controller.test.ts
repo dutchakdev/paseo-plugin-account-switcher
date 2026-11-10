@@ -542,7 +542,7 @@ describe("confirmation token lifecycle", () => {
     expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: account.id, launchToken: null });
   });
 
-  it("offers the switch when an unconfirmed Codex agent's first turn fails on a used-up account", async () => {
+  it("does not offer recovery for an unobserved first turn based only on a full quota reading", async () => {
     const root = await newRoot(), home = join(root, "account-switcher");
     vi.stubEnv("PASEO_HOME", root);
     const on = new Map<string, (event: unknown, context: unknown) => Promise<unknown>>();
@@ -569,8 +569,8 @@ describe("confirmation token lifecycle", () => {
         timeline: { append: async (item: { id: string; data: unknown }) => { appended.push(item); return {}; } },
       }) } };
       await on.get("agent.turn_ended")!({ agent: { id: "agent-1", provider: "codex" }, turnId: "turn-1", outcome: { kind: "failed", error: { message: "Usage limit reached" } }, timeline: [] }, { paseo: host });
-      expect(appended).toEqual([expect.objectContaining({ id: "account-failover-agent-1-turn-1", data: expect.objectContaining({ state: "offered", from: "Work", fromId: work.id, toId: second.id }) })]);
-      expect((await store.read()).bindings[0]).toMatchObject({ currentAccountId: work.id, launchToken: null });
+      expect(appended).toEqual([]);
+      expect((await store.read()).bindings[0]).toMatchObject({ currentAccountId: null, launchToken: token });
     } finally { await dispose(); vi.unstubAllEnvs(); }
   });
 

@@ -65,3 +65,39 @@ export class AutoFailoverGuard {
     this.switches.set(agentId, [...this.recent(agentId, now), { turnKey, fromId, toId, at: now }]);
   }
 }
+
+export const QUOTA_FRESH_MS = 120_000;
+/** Recovery requires a successful, current provider read, never a stale cached full window. */
+export function freshQuota(snapshot: UsageSnapshot | undefined, now: number, since = now - QUOTA_FRESH_MS): snapshot is UsageSnapshot {
+  if (!snapshot || snapshot.status !== "ok" || snapshot.error || snapshot.nextRetryAt) return false;
+  return [snapshot.fetchedAt, snapshot.checkedAt].every(value => {
+    const at = value ? Date.parse(value) : NaN;
+    return Number.isFinite(at) && at >= Math.max(since - 1000, now - QUOTA_FRESH_MS) && at <= now + 1000;
+  });
+}
+export type RecoveryAccount = SelectionAccount & { provider: string; identityKey: string | null; generation: number };
+/** Only for a turn with independently verified quota-interruption evidence. */
+export function recoveryDecision(input: { currentId: string; accounts: readonly RecoveryAccount[]; usage: readonly UsageSnapshot[]; model: string | null; now: number; since?: number; excludedIdentities?: readonly string[] }): FailoverDecision | null {
+  const source = input.accounts.find(a => a.id === input.currentId);
+  const sourceUsage = input.usage.find(u => u.accountId === source?.id && u.provider === source.provider);
+  if (!source?.identityKey || source.authStatus !== "ready" || source.loginToken || !freshQuota(sourceUsage, input.now, input.since)) return null;
+  if (input.model && sourceUsage.models && !sourceUsage.models.includes(input.model)) return null;
+  if (extraUsageLeft(sourceUsage) || !(sourceUsage.usageAllowed === false || sourceUsage.windows.some(w => fullUntilReset(w, input.now)))) return null;
+  const resetsAt = sourceUsage.windows.filter(w => fullUntilReset(w, input.now)).map(w => w.resetsAt!).sort((a,b) => Date.parse(b)-Date.parse(a))[0] ?? null;
+  const candidates = input.accounts.filter(a => {
+    const snapshot = input.usage.find(u => u.accountId === a.id && u.provider === source.provider);
+    if (a.id === source.id || a.provider !== source.provider || !a.identityKey || a.identityKey === source.identityKey || input.excludedIdentities?.includes(a.identityKey) || a.authStatus !== "ready" || a.loginToken || !freshQuota(snapshot, input.now, input.since)) return false;
+    if (input.model && snapshot.models && !snapshot.models.includes(input.model)) return false;
+    if (snapshot.usageAllowed === false || snapshot.windows.some(w => (w.scope === "account" || w.scope === "model") && w.usedPercent !== null && w.usedPercent >= 100 && (!w.resetsAt || Date.parse(w.resetsAt) > input.now))) return false;
+    const windows = snapshot.windows.filter(w => w.scope === "account" && w.usedPercent !== null && (!w.resetsAt || Date.parse(w.resetsAt) > input.now));
+    return snapshot.usageAllowed === true || (windows.length > 0 && windows.every(w => w.usedPercent! >= 0 && w.usedPercent! < 100));
+  }).sort((a,b) => {
+    const remaining = (id:string) => Math.min(100, ...input.usage.find(u => u.accountId === id)!.windows.filter(w => w.scope === "account" && w.usedPercent !== null).map(w => 100-w.usedPercent!));
+    return remaining(b.id)-remaining(a.id);
+  });
+  return candidates[0] ? {kind:"offer",fromId:source.id,toId:candidates[0].id,resetsAt} : {kind:"none",fromId:source.id,resetsAt};
+}
+
+export function explicitCodexQuota(outcome: {kind:string; error?:{code?:string;message:string}}): boolean {
+  return outcome.kind === "failed" && ["usage_limit_reached", "usageLimitExceeded"].includes(outcome.error?.code ?? "");
+}

@@ -362,12 +362,12 @@ export class AccountController {
    const result=await paseo.agents.ref(id).refresh();if(!result)throw new SwitchRefusal("Agent not found.");
    const a=result.agent;
    return{provider:a.provider,busy:a.status==="running"||a.status==="initializing"||!!a.activeTurn||a.pendingPermissions.length>0,archived:!!a.archivedAt};
-  },reload:async(id)=>{
+  },reload:async(id,beforeReload)=>{
    await requireIntegration();
    const agent=paseo.agents.ref(id) as {reload?:()=>Promise<unknown>;commands?:()=>Promise<unknown>};
    // From Paseo 0.14 the SDK sends the request the CLI would, with no process to start and no daemon address to find.
    if(agent.reload){
-    try{await agent.reload();}
+    try{await beforeReload?.();await agent.reload();}
     catch(error){
      console.error(`Native reload of agent ${id} failed: ${stripVTControlCharacters(error instanceof Error?error.message:String(error)).replace(/\s+/g," ").trim().slice(0,500)||"no output"}`);
      throw new SwitchRefusal("The native agent reload failed. Check the agent status and try again.");
@@ -378,7 +378,7 @@ export class AccountController {
     if(typeof listen!=="string"||!listen)throw new SwitchRefusal("Could not identify the daemon for reload.");
     const host=listen.replace(/^0\.0\.0\.0:/,"127.0.0.1:");
     const cli=paseoCli();let command=cli.command;
-    const reload=(file:string)=>execFileAsync(file,["agent","reload",id,"--json","--host",host],{timeout:120_000,maxBuffer:1024*1024,env:cli.env});
+    const reload=async(file:string)=>{await beforeReload?.();return execFileAsync(file,["agent","reload",id,"--json","--host",host],{timeout:120_000,maxBuffer:1024*1024,env:cli.env});};
     try{
      // A CLI that could not start reloaded nothing, so `paseo` on PATH can still try. One that ran and failed is not repeated.
      await reload(command).catch(error=>{const code=(error as {code?:unknown}).code;if(command==="paseo"||(code!=="ENOENT"&&code!=="EACCES"))throw error;command="paseo";return reload(command);});

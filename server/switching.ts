@@ -9,11 +9,16 @@ export interface SwitchDependencies {
  store:AccountStore;
  inspect:(agentId:string)=>Promise<{provider:string;busy:boolean;archived:boolean}>;
  checkAccount:(accountId:string)=>Promise<{authStatus:string}>;
- reload:(agentId:string)=>Promise<void>;
+ reload:(agentId:string,beforeReload?:()=>Promise<void>)=>Promise<void>;
  /** Last known limits; read from the cache, so creating an agent never waits for a provider. */
  usage?:()=>Promise<UsageSnapshot[]>;
  applying?:Set<string>;
  receiptTimeoutMs?:number;
+}
+/** Guards are supplied only by a saved recovery operation, never by manual /account calls. */
+export interface RecoverySwitch {
+ guard:(stage:"afterRead"|"afterInspect"|"afterAccountCheck"|"afterBinding"|"beforeReload"|"afterReload"|"afterReceipt")=>Promise<void>;
+ afterConfirmed:()=>Promise<void>;
 }
 /** A switch refused for a reason written for the user: the chat may show its message. Any other error may carry
  * paths or internals, and only the plugin log gets it. */
@@ -41,13 +46,15 @@ export class SwitchService {
  }
  /** `expected` is the account the caller showed or named; another client's later selection must not be applied in its place.
   * `switching` is told once the binding has started switching; a failure from then on is rolled back here. */
- async apply(agentId:string,expected?:string,switching?:()=>void):Promise<Binding>{
+ async apply(agentId:string,expected?:string,switching?:()=>void,recovery?:RecoverySwitch):Promise<Binding>{
    if(this.applying.has(agentId))throw new SwitchRefusal("An account switch is already in progress.");
    this.applying.add(agentId);
    let previous:StoredBinding|undefined;
+   let reloadAttempted=false;
    const token=randomUUID();
    try {
      const {store}=this.deps, state=await store.read();
+     await recovery?.guard("afterRead");
      if(!state.integration.enabled)throw new SwitchRefusal("Enable account integration first.");
      const selected=state.bindings.find(b=>b.agentId===agentId);
      if(!selected?.pendingAccountId)throw new SwitchRefusal("Select an account first.");
@@ -58,16 +65,36 @@ export class SwitchService {
      if(target.loginToken)throw new SwitchRefusal("Finish signing in to the selected account first.");
      const assertIdle=async()=>{const agent=await this.deps.inspect(agentId);if(agent.archived)throw new SwitchRefusal("The agent is archived.");if(agent.provider!==target.provider)throw new SwitchRefusal("The agent provider changed.");if(agent.busy)throw new SwitchRefusal("Wait for the agent to finish its response.");};
      await assertIdle();
+     await recovery?.guard("afterInspect");
      const {authStatus}=await this.deps.checkAccount(target.id);
+     await recovery?.guard("afterAccountCheck");
      if(authStatus!=="ready")throw new SwitchRefusal(authStatus==="needs_auth"?"Sign in to the selected account first.":"Cannot verify the selected account's sign-in. Check its credentials in Accounts, then try again.");
      await assertIdle();
+     await recovery?.guard("afterInspect");
      previous=await store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(!r.integration.enabled||!b||b.pendingAccountId!==target.id||b.status==="switching")throw new SwitchRefusal("The account selection changed; try again.");if(accountFrom(r,target.id).loginToken)throw new SwitchRefusal("Account sign-in is still in progress.");const old=structuredClone(b);b.status="switching";b.error=null;b.launchAccountId=target.id;b.launchToken=token;return old;});
      switching?.();
-     await this.deps.reload(agentId);
+     await recovery?.guard("afterBinding");
+     await recovery?.guard("beforeReload");
+     reloadAttempted=true;
+     await this.deps.reload(agentId,recovery?()=>recovery.guard("beforeReload"):undefined);
+     await recovery?.guard("afterReload");
      if(!await confirmLaunch(store.root,agentId,target.id,token,this.receiptTimeoutMs))throw new SwitchRefusal("The new account did not confirm its launch.");
-     return await store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(!r.integration.enabled||!b||b.launchToken!==token)throw new SwitchRefusal("The account switch state changed.");b.currentAccountId=target.id;b.pendingAccountId=null;b.status="ready";b.error=null;b.launchToken=null;b.registrationObserved=true;return BindingSchema.parse(b);});
+     await recovery?.guard("afterReceipt");
+     const confirmed=await store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(!r.integration.enabled||!b||b.launchToken!==token)throw new SwitchRefusal("The account switch state changed.");b.currentAccountId=target.id;b.pendingAccountId=null;b.status="ready";b.error=null;b.launchToken=null;b.registrationObserved=true;return BindingSchema.parse(b);});
+     // The switch stands if continuation fails. Keep the same service lock through send and its journal write.
+     previous=undefined;
+     await recovery?.afterConfirmed();
+     return confirmed;
    } catch(error) {
-     if(previous){
+     if(previous&&recovery){
+       // A canceled automatic operation must not reload a user turn as rollback. Preserve uncertainty for /account.
+       const before=previous;
+       await this.deps.store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(b?.launchToken===token){
+        b.currentAccountId=reloadAttempted?null:before.currentAccountId;b.pendingAccountId=before.pendingAccountId;
+        b.launchAccountId=reloadAttempted?b.launchAccountId:before.launchAccountId;b.launchToken=null;b.status="error";
+        b.error=reloadAttempted?"Recovery stopped; the active account must be confirmed in Accounts.":"Recovery canceled before reload.";
+       }});
+     }else if(previous){
        const rollback=previous,rollbackToken=randomUUID();
        const claimed=await this.deps.store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(b?.launchToken!==token)return false;b.currentAccountId=null;b.launchAccountId=rollback.currentAccountId??b.launchAccountId;b.launchToken=rollbackToken;b.status="switching";return true;});
        if(!claimed)throw error;
@@ -87,11 +114,12 @@ export class SwitchService {
  /** Selects `accountId` and applies it in one step, for a switch the user did not select in the switcher (the failover
   * row's button, the automatic switch). A refusal before the binding starts switching puts the agent's selection back
   * as it was and drops a binding this call created, so no selection the user never made is left pending. */
- async switchTo(agentId:string,accountId:string):Promise<Binding>{
+ async switchTo(agentId:string,accountId:string,recovery?:RecoverySwitch):Promise<Binding>{
    const {store}=this.deps,before=(await store.read()).bindings.find(b=>b.agentId===agentId);
+   await recovery?.guard("afterRead");
    const prepared=await this.prepare(agentId,accountId);
    let started=false;
-   try{return await this.apply(agentId,accountId,()=>{started=true;});}
+   try{await recovery?.guard("afterRead");return await this.apply(agentId,accountId,()=>{started=true;},recovery);}
    catch(error){
      // Only a binding exactly as `prepare` left it is put back; anything else is a newer choice of another client.
      if(!started)await store.change(r=>{

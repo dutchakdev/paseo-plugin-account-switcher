@@ -7,7 +7,7 @@ in this launcher list.
 
 | Package | Bundled version | License | Full text |
 | --- | --- | --- | --- |
-| `@getpaseo/plugin` | 0.11.4 | Apache-2.0, with the upstream third-party component exception | [Paseo license](licenses/paseo-0.11.4.txt) |
+| `@getpaseo/plugin` | 0.15.4 | Apache-2.0, with the upstream third-party component exception | [Paseo license](licenses/paseo-0.15.4.txt) |
 | `@iarna/toml` | 2.2.5 | ISC | [TOML license](licenses/iarna-toml-2.2.5.txt) |
 | `zod` | 4.6.7 | MIT | [Zod license](licenses/zod-4.6.7.txt) |
 
@@ -25,8 +25,7 @@ otherwise unmodified. The emitted Paseo code comes from the SDK's `rpc`,
 
 - **Paseo:** copyright 2025-present Mohamed Boudra. The published SDK package
   does not include a license file, so the complete file is copied from the
-  matching upstream [`v0.11.4` release](https://github.com/getpaseo/paseo/blob/v0.11.4/LICENSE),
-  commit [`dc5b02f7d7c120baea380d76def8b968020d8823`](https://github.com/getpaseo/paseo/blob/dc5b02f7d7c120baea380d76def8b968020d8823/LICENSE).
+  matching upstream [`v0.15.4` release](https://github.com/getpaseo/paseo/blob/v0.15.4/LICENSE).
   It retains the upstream statement that third-party components keep their own
   licenses. That release has no separate root or plugin-package `NOTICE` file.
 - **`@iarna/toml`:** copyright 2016 Rebecca Turner. The full text is copied

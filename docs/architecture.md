@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-Account Switcher is an independent plugin for Paseo 0.11.0 and newer, including beta releases after 0.11.0. It uses public plugin and provider APIs; no Paseo core patch is required. The development SDK is pinned to 0.11.4, the oldest supported release, so typechecking shows the plugin uses only the 0.11 API. The screen API and the usage source are 0.11 APIs, so every supported release has them. The plugin still checks for them at runtime, falling back to the older surface API or skipping the usage source; on a supported host these checks are defensive and change nothing.
+Account Switcher is an independent plugin for Paseo 0.15.4 and newer on both daemon and connected clients. The development SDK is pinned to 0.15.4 so the native reload, observed-turn timeline and non-interrupting continuation contracts are checked together. No Paseo core patch is required. Claude quota evidence additionally reads private CLI transcript fields verified with Claude Code 2.1.321; unknown shapes are rejected, not inferred from prose. Existing screen and usage-source feature checks remain defensive fallbacks, rather than a promise of support for older hosts.
 
 ```mermaid
 flowchart LR
@@ -18,15 +18,19 @@ flowchart LR
   Monitor -->|Cached readings| Source[Usage source]
   Source --> PaseoUsage[Paseo Usage view]
   Controller -->|Session env| PaseoPopover[Paseo usage popover]
-  Hooks[Agent turn hook] -->|Turn that may have hit a limit| Controller
-  Controller -->|Failover row| Chat[Chat timeline]
+  Hooks[Observed turn and activity hooks] --> Recovery[Quota recovery coordinator]
+  Recovery -->|Refresh account limits| Monitor
+  Recovery -->|Guarded switch and launch receipt| Controller
+  Recovery --> Journal[Private recovery journal]
+  Recovery -->|Failover row and guarded continuation| Chat[Chat timeline]
 ```
 
 ## Runtime boundaries
 
 - `index.client.tsx` and `client/` provide React Native UI, host-themed components, the composer chip, the host's modal, and the timeline rows. TanStack Query caches are scoped to the selected daemon.
 - `client/screens.ts` registers the Accounts screen. It uses `addScreen` and, for the sidebar row, `addSidebarHeaderItem` with the host's `SidebarRow`; when the app lacks either, it uses the deprecated `addSurface` or `addSidebarItem` for that part. Each choice is a feature check on the app object, not a version comparison. The Command Center item opens the screen with `openScreen`, or `openSurface` on an app without it. Both paths show the same component.
-- `index.server.ts` and `server/controller.ts` register RPCs, agent lifecycle hooks (`agent.create`, `agent.session_open`, `agent.created`, `agent.turn_ended`), and the usage source. The controller owns profiles, login reservations, switching, integration, and monitoring.
+- `index.server.ts` and `server/controller.ts` register RPCs, agent lifecycle hooks (`agent.create`, `agent.session_open`, `agent.created`, turn start/end, permissions, close and archive), and the usage source. The controller owns profiles, login reservations, switching, integration, and monitoring.
+- `server/continuation.ts` coordinates evidenced quota recovery; `continuation-timeline.ts` identifies the current terminal assistant, `claude-quota.ts` verifies its native parent chain, and `continuation-ledger.ts` persists operation state. These services take testable host/store boundaries.
 - `shared/contracts.ts` defines validated RPC inputs, outputs, and public state. It does not import client or server runtime code.
 - `server/launcher-main.ts` is bundled into a standalone Node launcher by `npm run build`. The generated `server/launcher-artifact.ts` is a build output, not a file to edit.
 
@@ -49,9 +53,9 @@ Managed environments remove authentication overrides and select the intended hom
 
 Enabling integration saves the original Claude and Codex commands and configures Paseo to invoke the plugin's launchers. Discovery resolves the real CLI first, so launchers do not recursively invoke themselves. A provider whose CLI cannot be resolved is marked unavailable and keeps its Paseo command; the registry records which providers integration owns, so installing the missing CLI later leaves the others integrated until **Enable** adds it. Discovery fails only when neither CLI resolves. The plugin checks command ownership again at runtime. External command changes disable integration and invalidate outstanding startup tokens; restoring the wrapper path alone does not re-enable it.
 
-An agent binding records its confirmed current account separately from its pending selection and requested launch account. **Prepare** changes only the selection. **Apply** verifies identity and idle state, reserves a launch token, and invokes `paseo agent reload` against the same daemon.
+An agent binding records its confirmed current account separately from its pending selection and requested launch account. **Prepare** changes only the selection. **Apply** verifies identity and idle state, reserves a launch token, and uses Paseo's native reload against the same agent and daemon.
 
-The launcher chooses the assigned profile and writes a startup receipt containing the matching account and launch token. The controller confirms the switch only after reload succeeds and the receipt matches. A failure after the binding enters `switching` triggers an attempt to restore the previous profile; a refusal before that point changes nothing. A failed rollback or interrupted switch leaves the account unconfirmed instead of displaying an assumed account.
+The launcher chooses the assigned profile and writes a startup receipt containing the matching account and launch token. The controller confirms the switch only after reload succeeds and the receipt matches. For ordinary manual switching, a failure after the binding enters `switching` triggers an attempt to restore the previous profile; a refusal before that point changes nothing. A guarded quota recovery uses the cancellation rules below instead of issuing a rollback reload that could interrupt new user work. A failed rollback or interrupted switch leaves the account unconfirmed instead of displaying an assumed account.
 
 A new agent's binding stays unconfirmed (`currentAccountId` null) until a receipt check confirms its launch account: the receipt names that account and launch token, and the agent's session is `idle` or `running`. `controller.snapshot` runs the check for every binding as the app polls `accounts.list`; `controller.accountOf` runs it for one agent when failover or a switch note needs that agent's account, so an agent started with no app open (a schedule, a heartbeat, `paseo run`) is confirmed too. For failover the check also accepts an agent in `error`: Paseo sets that status when a turn fails, before `agent.turn_ended` fires, and the launcher wrote the receipt when it started the CLI, so the receipt still names the account the agent started on. The two status lists are passed to the shared check explicitly.
 
@@ -90,7 +94,7 @@ Native reload preserves the native session ID, but does not offer an atomic idle
 
 ## Paseo usage and failover
 
-Three parts connect the plugin's readings to Paseo's own usage UI and to the chat. Each keeps its rules in pure functions (`profileEnv`; `discoverAccounts` and `usageReport`; `failoverDecision` and `AutoFailoverGuard`) with a thin hook around them, so the rules are tested without a daemon.
+The session environment and usage source connect existing readings to Paseo's usage UI. Quota recovery has a separate coordinator, strict `recoveryDecision` selector and persistent ledger, with fake host/store boundaries for tests. It does not change cached `launchOrder` selection for new agents or ordinary manual switching.
 
 ### Session environment
 
@@ -113,43 +117,43 @@ Paseo 0.15 adds a host setting that turns usage checks off, stored as `daemon.us
 - `fetch` maps the controller's cached snapshot and makes no provider request. `ok` and `stale` give an available report with the plan and one window per reading that has a percentage or a detail (Claude names some limits without data; Paseo's own sources leave those out too), a duration from the reported minutes, a `scope` for model windows, the reading's `detail` as a detail, and account-wide windows marked as the summary. `needs_auth` and `unavailable` give an error with a fixed short message.
 - Window ids come from the quota's label, not from the response position. Paseo matches pinned windows by id, and the collectors' own ids are positions (`weekly_scoped:0`, `gpt-5.3-codex-spark:primary`) that shift when a provider reorders its response. The label names the quota; Codex's `· primary` or `· secondary` slot suffix is dropped. Two readings that name the same quota and period get `:2`, `:3` and so on, the only place order enters an id.
 
-### Failover on a used-up limit
+### Verified quota interruption and continuation
 
-Paseo does not say why a turn failed, so the plugin decides from its own readings, not from text. Which turns it looks at depends on the provider. Codex reports a turn its limit stopped as `failed`. Claude reports it as `completed`: the Claude Agent SDK ends such a turn with a result of subtype `success` and `is_error` set, and Paseo's Claude provider maps every `success` result to `turn_completed` (0.11.0 through 0.14.0-beta.1). So `failed` turns of both providers are checked, and `completed` Claude turns too, behind a prefilter: `mayBeUsedUp` on the cached reading of the agent's account (an account-wide window full until a later reset, or `usageAllowed` false). An ordinary completed turn ends there without a provider request. On this path only, a spend-scope window with room left (`extraUsageLeft`: Claude's `extra_usage`, under 100%) also ends it, on the cached reading and again on the fresh one: with extra usage on, Claude keeps answering past a full 5-hour window. Failed turns and `blocker()` ignore spend windows. Canceled turns and completed Codex turns are ignored.
+`ContinuationCoordinator` requires an observed `agent.turn_started` with a stable turn ID. The callback captures its generation and clock synchronously, then reads the session snapshot; a matching `activeTurn.startedAt` is preferred when present. Turns that predate plugin loading, unknown native sessions and ordinary completions do not become recovery candidates just because the limits cache is full. Codex must report an explicit `usage_limit_reached` or `usageLimitExceeded` failure code. Claude may report a native quota stop as either completed or failed, so it requires the independent transcript proof below.
+
+For Claude, `readClaudeTurnMessageId` requests canonical timeline history in bounded pages (at most 20 pages and 2,000 entries). Paseo 0.15.4 returns `projected` history even for that request; its projector preserves assistant entries with distinct explicit message IDs. The reader selects only the final assistant by sequence, with the current turn ID, Claude provider and an unambiguous message ID. A later user message, missing ID, different turn/provider, changed epoch, incomplete page or pagination gap stops the check. It never falls back to an earlier assistant error. User message IDs cannot be the native anchor because Paseo may replace them with client IDs.
+
+`readClaudeQuota` opens only the bound profile's exact native session JSONL, reads at most the last 8 MiB and checks that the regular file did not move or change during the read. The latest native parent branch must end in the structured assistant error `isApiErrorMessage: true`, `error: "rate_limit"`, with `apiError` absent or `usage_limit_reached`. Its `message.id` must equal the current public terminal assistant ID. The chain must reach a real initiating user; sidechains, foreign sessions, broken/truncated branches, later successful answers or inputs, model-credit errors, quoted error text and standalone SDK rate-limit events are rejected. These are private Claude 2.1.321 fields, so unfamiliar formats skip recovery.
 
 ```mermaid
 flowchart TD
-  T[agent.turn_ended] --> K{failed, or completed on Claude?}
-  K -- no --> Z[nothing]
-  K -- yes --> P{integration on for the provider,<br/>no switch under way for this turn?}
-  P -- no --> Z
-  P -- yes --> W[accountOf: the agent's account,<br/>an unconfirmed launch confirmed by its receipt]
-  W -- none --> Z
-  W --> Q{completed: does the cached reading show the account<br/>used up, with no extra usage left?}
-  Q -- no --> Z
-  Q -- "yes, or a failed turn" --> R[read the account's limits and the agent again]
-  R --> E{failoverDecision: is the account used up?}
-  E -- no --> Z
-  E -- yes --> C{another account would be tried first<br/>by launchOrder?}
-  C -- no --> N[row: no other account has room]
-  C -- yes --> A{automatic switching on<br/>and the guard allows it?}
-  A -- no --> O[row: offer with a button]
-  O -->|click: failover.apply| S
-  A -- yes --> S[row: switching, then switchTo]
-  S -- ok --> D[row: switched, then send Continue.<br/>not after an automatic switch on a completed turn]
-  S -- refused or failed --> F[row: could not switch, with the reason]
+  T[Observed current turn ended] --> E{Explicit Codex quota failure,<br/>or exact Claude native terminal error?}
+  E -- no --> Z[Leave the session unchanged]
+  E -- yes --> R[Confirm source account and refresh limits<br/>for source and replacements]
+  R --> F{Fresh account-wide exhaustion<br/>and distinct usable identity?}
+  F -- no replacement --> N[Record no replacement]
+  F -- no exhaustion --> Z
+  F -- yes --> I[Persist intent with stable turn key]
+  I --> A{Automatic switching enabled?}
+  A -- no --> O[Offer tied to the saved operation]
+  A -- yes --> S
+  O -->|validated button| S[Guarded switch and matching launch receipt]
+  S --> D[Persist sending and message ID]
+  D --> C[Final activity check, then Continue. with steer]
+  C --> J[Persist finished or uncertain; never replay an uncertain send]
 ```
 
-- **Decision.** `server/failover.ts` (`failoverDecision`) returns a decision only when the current account's blocker, from `selection.ts`, is `exhausted`: an account-wide window at 100% with a future reset, or a fresh Codex reading with ordinary usage not allowed. A plan without the model is not a limit and gives nothing. The replacement is the first account `launchOrder` would try instead of the current one, so the rules for spares are those of a new agent. `resetsAt` is the latest end among the full windows.
-- **The agent's account.** `controller.accountOf`, given the registry the hook already read, gives the binding's confirmed account, or confirms an unconfirmed launch by its receipt (the check described under switching), or, for an agent without a binding, its provider's Current CLI account. Nothing confirmed means no row. Here the receipt check accepts an agent in `error` as well as `idle` or `running`, since Paseo marks an agent `error` after a failed turn, before `agent.turn_ended` fires.
-- **Evidence is read again.** The hook refreshes the account's limits and the agent in parallel, then reads the registry once more and returns if a switch started or the binding moved meanwhile (`boundAccount`, the registry half of `accountOf`). From that read to the row nothing awaits.
-- **The row.** A plugin timeline item of kind `account-failover`, version 1, with the states `offered`, `none`, `switching`, `switched`, `auto`, and `failed` (`shared/failover.ts`). Its id is `account-failover-<agentId>-<turnId>`, and appending with the same id replaces the row, so one row follows the offer through to its outcome. Two optional fields were added without a version change, and rows without them still render: `fromId`, the account the offer moves from, and `resumes`, false when an automatic switch did not ask the agent to continue (the row then adds *Your next message runs on Second.*). `client/failover-row.tsx` draws it and calls `failover.apply` through the client handed in at registration, not through `useRpc`, because an app may draw timeline rows outside the plugin's RPC provider. The RPC accepts only a row id that starts with the agent's own prefix.
-- **Once per exhaustion.** An `offered` or `none` row is appended once per agent, account and `resetsAt` while the plugin runs (an in-memory set, like the guard), so a Claude agent that keeps completing turns on a used-up account gets one row. A later exhaustion, with another reset or account, is offered again.
-- **A stale offer.** The button passes the row's `fromId`. `failover.apply` refuses, and turns the row `failed` with the reason, when the agent now runs on another account or already runs on the offered one. A row without `fromId` gets only the second check.
-- **The switch.** Button and automatic switching share one function: it appends the `switching` row, then runs `SwitchService.switchTo`, the same `prepare` and `apply` as `/account` in one step, which check the account's identity, that the agent is idle and has no pending permission request, and the launch receipt. A refusal before the binding enters `switching` puts the binding's selection, status, error and launch token back as they were, and drops a binding the step created, so no selection the user never made stays pending; a failure after that point rolls back as **Apply** does. On success it rewrites the row, refreshes the new account's limits, and sends the agent `Continue.`, except after an automatic switch on a completed Claude turn, which may have finished for real; a prompt that cannot be delivered is only logged, because the switch stands.
-- **What a failure shows.** The switch service's own refusals are `SwitchRefusal` errors, including those its controller dependencies raise (integration changing, agent not found, reload failed). Only their messages reach the row and the RPC; `failover.apply`'s own answers (another agent's row, a missing account, an unconfirmed or stale offer) are refusals too. Any other error, whose text can name files, shows *The switch failed; the plugin log has details.* and goes to `console.error`, including one from `failover.apply`'s checks before the switch starts (reading the registry, confirming the agent's account).
-- **One at a time.** A set of agents with a switch in flight is claimed before any await. The hook ignores a turn reported again while a switch is under way, after its automatic switch, or while the binding is `switching`, so a repeated report cannot roll the row back to an offer.
-- **Automatic switching.** The registry holds `autoFailover` per provider (off by default; registries from before it read as off), set by `accounts.auto-failover` from the setting in Accounts, which shows for a provider with more than one account. When on, an offer goes through `AutoFailoverGuard` first: one switch per turn, three per agent in a rolling hour, and never to an account the agent left in that hour. It lives in memory and resets with the daemon. The switch is not awaited by the hook, because reloading the agent and waiting for its launch takes longer than Paseo waits for a hook; the row reports progress. When the guard refuses, the ordinary offer appears instead.
+`recoveryDecision` requires successful fresh readings (`status: ok`, valid fetched/checked times no more than two minutes old), current account-wide exhaustion, and no remaining paid extra-usage allowance. Recovery refreshes both source and replacements rather than deciding only from cached data. A replacement must be signed in, outside a sign-in operation, use the same provider with a known different identity, and have either known remaining account quota or an authoritative `usageAllowed: true`. Stale, unknown, full and known model-incompatible replacements do not qualify. The original model and native session are preserved. This strict recovery selector is separate from the less restrictive cached fallback policy for creating a new agent.
+
+Each operation has a stable `(agentId, sessionId, turnId)` key and a hashed timeline row ID. The private `continuation-ledger.json` under the account store records identifiers, identity hashes, timestamps, state and continuation message ID, not conversation bodies or credentials. Writes are serialized and atomic with mode `0600`. States are `intent`, `switching`, `sending`, `finished` and `uncertain`. Loading unfinished records marks them uncertain; neither reload nor duplicate events replay them. Attempts are limited to three per agent in a rolling hour, without returning to an identity left during that hour. Subagents use the same evidence and isolation checks rather than a separate blanket exclusion.
+
+Automatic switching and the quota row's button share the saved operation. Buttons cannot reconstruct an operation from arbitrary account/row IDs; forged, stale and pre-reload offers are refused with a direction to `/account`. The per-agent coordinator claim and `SwitchService` applying lock cover switching, the continuation send and its journal write. `sending` and the message ID are persisted before sending, so an ambiguous failure is never automatically resent. Ordinary **Apply** and `/account` keep their existing selection/rollback behavior and send no continuation.
+
+Turn starts, cancellations, pending permissions, close/archive and snapshot activity invalidate older generations. Provider, model, workspace, native session, last user activity, account identity/generation and idle state are checked after important awaits, immediately before reload, after the matching launch-token receipt and before sending. A single close may belong to this operation's own reload; only that owned boundary permits known transient opening statuses. Receipt and send checks again require idle/error with no active turn or pending permission. A canceled recovery does not perform a second rollback reload; uncertainty remains visible for manual account confirmation. Deactivation stops pending work before closing the controller.
+
+The row remains `account-failover`, version 1, with the existing display states and optional fields for old history. New resumable offers carry `resumes: true` and refer to the persisted operation. Rows are still best-effort daemon timeline entries; durable records prevent replay but do not recreate old UI history after restart.
+
+Paseo 0.15.4 offers no atomic idle/session compare-and-send or compare-and-reload operation. Final checks plus `activeTurnBehavior: "steer"` avoid intentionally interrupting a new turn, but another client's input can still arrive in the final RPC gap and receive a continuation. An idle stop without a cancellation event can have the same observation gap. The plugin cannot promise a cross-client transaction; manual inspection remains necessary after uncertainty.
 
 ## Sign-in
 
@@ -171,7 +175,7 @@ The [monitor reference](../server/usage/README.md) documents credential fingerpr
 
 ## Stored data
 
-The root is `$PASEO_HOME/account-switcher`, or `~/.paseo/account-switcher` by default. It contains the registry, managed profile homes, generated launchers, startup/sign-in receipts, and the last-success limits cache. Plugin-created directories use `0700`; registry/cache files use `0600`, and launchers use `0700`.
+The root is `$PASEO_HOME/account-switcher`, or `~/.paseo/account-switcher` by default. It contains the registry, managed profile homes, generated launchers, startup/sign-in receipts, the last-success limits cache, and the private recovery operation journal. Plugin-created directories use `0700`; registry/cache files use `0600`, and launchers use `0700`.
 
 The registry includes account labels, identity metadata, original commands, defaults, per-provider fallback and automatic-failover choices, and bindings. Access and refresh tokens stay in provider-owned credential storage. They are not returned through plugin RPCs or written to the limits cache. The sign-in RPC exposes only the temporary authorization information needed for that attempt.
 
