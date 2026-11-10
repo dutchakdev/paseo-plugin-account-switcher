@@ -22,10 +22,12 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 
 ## Requirements
 
-- **Paseo 0.15.4 or newer**, on a **macOS or Linux** daemon and on the connected client.
+- **Paseo 0.15.3 or newer**, on a **macOS or Linux** daemon and on the connected client.
 - **Node.js 22.12.0 or newer**, with npm.
 - The official **Paseo** CLI and at least one of **Claude Code** or **Codex** available to the daemon. A provider whose CLI is missing is skipped; after installing it, reload the plugin and select **Enable** in its section.
 - Claude or ChatGPT subscription authentication. API keys and custom authentication/provider overrides are unsupported.
+
+The development SDK remains pinned to 0.15.4. Source comparison with 0.15.3 confirms that the plugin, timeline, hook, send and reload contracts used here are unchanged; requiring 0.15.4 would unnecessarily hide Accounts on a 0.15.3 client.
 
 The interface is in English. Reset dates use the viewing device's local time zone. See [installation](docs/installation.md) for remote hosts and [verification](docs/verification.md) for the scope of recorded testing.
 
@@ -33,7 +35,7 @@ The interface is in English. Reset dates use the viewing device's local time zon
 
 Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude and Codex sign-ins to identify accounts and check their limits, and checking limits sends no model messages. The only message it sends to an agent is **Continue.**, after you switch from the row a used-up limit adds to the chat, or after an automatic switch of a verified quota-interrupted turn. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
 
-On Paseo 0.15.4 or a later release, install the reviewed version from the plugin directory:
+On Paseo 0.15.3 or a later release, install the reviewed version from the plugin directory:
 
 ```sh
 paseo plugin add dutchakdev/account-switcher
@@ -45,7 +47,7 @@ npm gets a new version before the directory approves it:
 paseo plugin install npm:paseo-plugin-account-switcher
 ```
 
-Paseo 0.11–0.15.3 users can stay on Account Switcher 0.10.2. Paseo 0.8 to 0.10 and the 0.11.0 betas refuse the manifest's `icon` field. They can stay on 0.5.0, the last release for them, installed from GitHub. Paseo then runs the manifest's dependency and build steps on the daemon:
+Paseo 0.11–0.15.2 users can stay on Account Switcher 0.10.2. Paseo 0.8 to 0.10 and the 0.11.0 betas refuse the manifest's `icon` field. They can stay on 0.5.0, the last release for them, installed from GitHub. Paseo then runs the manifest's dependency and build steps on the daemon:
 
 ```sh
 paseo plugin install dutchakdev/paseo-plugin-account-switcher --ref v0.5.0

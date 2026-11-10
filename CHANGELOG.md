@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Require Paseo 0.15.4 or newer on the daemon and connected clients; align the development SDK and bundled license notice with that release.
+- Require Paseo 0.15.3 or newer on the daemon and connected clients. Keep the development SDK and bundled license notice at 0.15.4, whose client/server contracts used by quota recovery are unchanged from 0.15.3.
 
 ### Fixed
 

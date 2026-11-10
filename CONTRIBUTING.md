@@ -1,6 +1,6 @@
 # Contributing
 
-Account Switcher is a TypeScript plugin for Paseo 0.15.4 and newer, with a React Native client and a Node.js daemon component. Changes should preserve explicit account selection, profile isolation, and honest limits data.
+Account Switcher is a TypeScript plugin for Paseo 0.15.3 and newer, with a React Native client and a Node.js daemon component. Changes should preserve explicit account selection, profile isolation, and honest limits data.
 
 ## Development setup
 
@@ -74,7 +74,7 @@ Server and client code must not import `@getpaseo/client` or `@getpaseo/protocol
 | `shared/contracts.ts` | Public RPC schemas and shared types |
 | `tests/` | Behavioral regressions and synthetic process fixtures |
 
-The [architecture guide](docs/architecture.md) explains how these parts fit together. Use the [public Paseo plugin reference](https://paseo.sh/docs/plugins/reference) and installed SDK declarations when changing integration code. The SDK development dependencies are pinned to 0.15.4, the minimum supported Paseo. The native Claude transcript adapter is verified against CLI 2.1.321; unknown structures fail closed.
+The [architecture guide](docs/architecture.md) explains how these parts fit together. Use the [public Paseo plugin reference](https://paseo.sh/docs/plugins/reference) and installed SDK declarations when changing integration code. The SDK development dependencies remain pinned to 0.15.4; the minimum supported Paseo is 0.15.3, whose client/server contracts used here are unchanged in 0.15.4. The native Claude transcript adapter is verified against CLI 2.1.321; unknown structures fail closed.
 
 ## Change guidelines
 

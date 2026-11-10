@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-Account Switcher is an independent plugin for Paseo 0.15.4 and newer on both daemon and connected clients. The development SDK is pinned to 0.15.4 so the native reload, observed-turn timeline and non-interrupting continuation contracts are checked together. No Paseo core patch is required. Claude quota evidence additionally reads private CLI transcript fields verified with Claude Code 2.1.321; unknown shapes are rejected, not inferred from prose. Existing screen and usage-source feature checks remain defensive fallbacks, rather than a promise of support for older hosts.
+Account Switcher is an independent plugin for Paseo 0.15.3 and newer on both daemon and connected clients. The development SDK remains pinned to 0.15.4. Source comparison with 0.15.3 found the plugin client/protocol implementation and the hook, timeline, send and reload contracts used here unchanged apart from package versions, so the shared daemon/client manifest minimum is 0.15.3. No Paseo core patch is required. Claude quota evidence additionally reads private CLI transcript fields verified with Claude Code 2.1.321; unknown shapes are rejected, not inferred from prose. Existing screen and usage-source feature checks remain defensive fallbacks, rather than a promise of support for older hosts.
 
 ```mermaid
 flowchart LR
