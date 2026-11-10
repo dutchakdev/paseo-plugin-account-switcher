@@ -1,7 +1,45 @@
 # Verification
 
-Last checked: **2026-11-07**. These results describe observed checks, not a guarantee
+Last checked: **2026-11-11**. These results describe observed checks, not a guarantee
 that every provider version or account lifecycle has been validated.
+
+## Live background Claude quota follow-up, 2026-11-11
+
+A metadata-only investigation found that Claude background task notifications can reach a structured quota error without new Paseo foreground turn hooks. A subsequent transcript-only queue flush must not be mistaken for a newly executed user input. No conversation bodies, credentials, local profile paths or raw provider logs are included here or in fixtures.
+
+Synthetic regressions combine the owned live observer, real coordinator and native parser: an existing idle session receives a future assistant error without hooks, with an exact queued bookkeeping suffix, fresh source exhaustion and a distinct replacement with room. Its own close/same-session thread start/launch receipt leads to one continuation. Reconnect/history, ordinary assistants, newer inputs, stop tombstones, stale native timestamps, session/model changes, duplicate native errors, reused foreground turn IDs and shutdown are covered without real provider calls. Foreground hooks and live callbacks share stop markers, including markers captured before discovery and retained across six forms of observation-handle replacement. They require fresh host user activity or a new session to unlock; autonomous SDK input alone is insufficient.
+
+A read-only SDK smoke check on Paseo 0.15.4 confirmed owned directory discovery of existing Claude agents, timeline readiness, baseline arming and cleanup with a substitute coordinator. It performed no quota refresh, account switch or send. Separate bounded in-memory replay accepted the observed structured error both before and after the exact queue-only suffix, using either native assistant ID representation. These checks establish interface/evidence compatibility, not an end-to-end recovery of a real exhausted subscription. `npm run check` passed for this follow-up: build, typecheck and **652/652 tests in 45 files**, including the review fixes for stop-marker retention and the shared hook/live gate. The focused parser/coordinator/hook suite also passed **126/126**. This is a local check, not a fresh cross-platform CI run. Independent review passed with 11 targeted lifecycle/cancellation regressions. Release validation and the 63-file npm tarball check passed, including the new observer module; packing restored the source manifest. A plugin-only hot reload then reported Accounts running with all five existing Claude observations armed. Account settings and the affected agent’s account, model, native session and last user message remained unchanged; no historical continuation was sent.
+
+## Verified quota continuation, 2026-11-10
+
+The minimum supported daemon and connected-client version is **Paseo 0.15.3**; all three Paseo development SDK packages remain pinned to **0.15.4**. Earlier entries below describe historical checks, not the compatibility promise of the current source. The reviewed 0.15.4 upstream license was byte-identical to the previously bundled 0.11.4 license; the build allowlist, license filename and third-party notice now name 0.15.4.
+
+### Compatibility metadata follow-up
+
+The initial `>=0.15.4` manifest excluded a 0.15.3 mobile client from evaluating the Accounts contribution even while its 0.15.4 daemon and RPCs worked. Read-only comparison of upstream [v0.15.3 (`d91ae138`) and v0.15.4 (`1c00b365`)](https://github.com/getpaseo/paseo/compare/d91ae138...1c00b365) found no changes to the plugin/client/protocol implementation used here beyond package versions; the required hook, timeline, send and reload contracts are the same. The remaining release changes concern model catalog, effort and release metadata. The manifest minimum is therefore 0.15.3, with SDK 0.15.4 and its reviewed license retained.
+
+This follow-up changes only metadata and documentation. No runtime or test logic changed, so the full suite was not repeated for this correction. `node scripts/release.mjs check`, `git diff --check`, `npm pack` and `scripts/check-package.mjs` passed for this metadata follow-up; packing restored the source manifest byte-for-byte. These checks are separate from the prior feature-suite result below.
+
+The official `assertPluginCompatibility` rejects app and daemon 0.15.3 with the previous manifest, accepts 0.15.3 and 0.15.4 with the correction, and continues rejecting 0.15.2. Typechecking and all nine sidebar/screen regressions passed. After a plugin-only reload on the 0.15.4 daemon, the catalog carried `>=0.15.3`, compatibility validation passed for a 0.15.3 client, and Accounts RPCs remained available. The user then confirmed that Accounts reappeared in the 0.15.3 phone sidebar and opened normally. This is a narrow loading check, not a full mobile layout, theme or quota-recovery acceptance test.
+
+### Automated checks
+
+Before this metadata follow-up, `npm ci --ignore-scripts --legacy-peer-deps` and `npm run check` passed on macOS with Node.js **26.13.0**: build, typecheck, and **623/623 tests** in **45 files**. `node scripts/release.mjs check` passed with the upstream package version unchanged at **0.10.2**. Packing to an external scratch directory and `scripts/check-package.mjs` passed; prepack/postpack restored the source manifest byte-for-byte and removed the temporary shrinkwrap. This is not a fresh cross-platform CI-matrix run.
+
+The synthetic regressions cover exact current-turn/native error correlation, rewritten client user IDs, projected assistant history, ordinary completion, quoted/old/foreign evidence, fresh source and target quotas, distinct identities and known model blockers. Activity/model/session/account changes, permission requests, deactivation, owned reload transitions, missing startup receipts, duplicate events, manual/automatic races, saved-offer validation, rolling attempt limits, journal reload and uncertain sends are checked without contacting a real daemon or subscription. A combined test passes a fake public timeline through the real transcript parser and recovery coordinator. Fixtures contain synthetic messages and identities; no live transcript or provider output is included.
+
+### Native CLI reproduction and read-only contract checks
+
+Claude Code **2.1.321** was run with an empty working directory, isolated HOME and provider config, `--bare`, a synthetic API key and a loopback-only fake endpoint returning HTTP 429. No real account credentials were used. This reproduced a stream result with subtype `success` and `is_error: true`, and a terminal transcript assistant with `isApiErrorMessage: true` and `error: "rate_limit"`; `apiError` can be absent. A separate structured-input probe confirmed how a supplied user UUID is written, but that UUID is not used for public/native matching because Paseo can rewrite user IDs.
+
+Read-only inspection of the fixed Paseo **v0.15.4** adapter/manager/projector contracts showed that assistant message IDs are retained while user IDs can be replaced. The daemon returns `projected` history even when the client requests `canonical`; distinct explicit assistant IDs remain separate. A bounded metadata-only check of recent public assistant entries against their bound native sessions found matching assistant IDs. It inspected IDs and structural fields only and published no message bodies, profile paths, account identifiers or raw logs. Historical timeline entries without a current turn ID remain ineligible.
+
+To reproduce the native shape independently, use a disposable empty HOME/config and working directory, clear inherited provider authentication and plugin/CLI overrides, and supply only a synthetic key with an explicitly loopback-bound fake API returning 429. Keep provider traffic confined to that endpoint. Invoke the installed CLI with `--bare` and structured streaming input/output, inspect only structural error fields and the generated synthetic JSONL, then remove only that disposable environment. Do not use an existing profile, real tokens or a real quota-exhausted account for this contract probe. This optional CLI experiment is separate from the normal test suite, which needs no real CLI sign-in.
+
+No real subscription was deliberately exhausted, reset or switched as a quota-recovery acceptance test. Successful automated switching and sending use fake host/store boundaries. The new source was observed loading on Paseo 0.15.4, which verifies loading only; it does not establish a real quota-hit-to-continuation outcome. Live quota recovery, context behavior after compaction/rewind, and native mobile UI acceptance remain unverified.
+
+Paseo has no atomic idle/session compare-and-send or compare-and-reload request. `steer`, generation checks and the durable journal reduce avoidable interruption/replay; they cannot close the final cross-client RPC gap or detect every idle stop without a cancellation event. An uncertain operation is not automatically retried.
 
 ## Credential access and account controls, 2026-11-07
 
@@ -397,21 +435,22 @@ Checked with an isolated Paseo **0.8.0** daemon, Claude Code **2.1.259**, and Co
 
 ## Remaining live acceptance
 
-- In a Paseo 0.11 or later app on a real daemon: an agent on a managed account
+- In a supported Paseo app on a real daemon: an agent on a managed account
   shows that account in Paseo's usage popover, and the Usage view lists the
   managed accounts and none of the **Current CLI** accounts twice. After an
   agent's usage details are opened, expect the known duplicate described under
   Known limits. Paseo may also read `CLAUDE_CONFIG_DIR` for settings or session
   files; a managed home links those directories to the source home, so check
   that a chat on a managed account behaves as before.
-- A Codex turn that fails on a really used-up account (or a forced reading)
+- A Codex turn with an explicit quota failure on a really used-up account
   produces the failover row, the button switches and sends **Continue.**, and
   automatic switching does the same with the setting on. Include an agent on
   **Current CLI**.
 - A Claude turn that hits its limit, which Paseo reports as completed, produces
-  the row; with automatic switching on, the chat switches without **Continue.**
-  and the row says where the next message runs. The SDK and provider mapping
-  behind this was read in source, not observed on a live account.
+  the row only when exact native evidence and fresh account-wide exhaustion
+  agree; with automatic switching on, the same session switches and receives
+  **Continue.** once. The isolated CLI contract probe above is not real quota
+  recovery acceptance.
 - An agent started with no app open (a schedule or `paseo run`) gets the row
   once its launch receipt confirms its account.
 - Two distinct authenticated accounts for **each** provider, concurrent agents,
@@ -439,6 +478,12 @@ Checked with an isolated Paseo **0.8.0** daemon, Claude Code **2.1.259**, and Co
 - A new agent that fails before registering, without a startup receipt, can leave
   an unconfirmed reservation requiring manual diagnosis. Archived agents retain
   bindings for resume.
+- Recovery requires turns observed since the plugin loaded, exact terminal
+  identity and a readable native chain. Unknown Claude versions and old timeline
+  history can be skipped even when a real quota limit exists.
+- Recovery records persist across reload, but unfinished operations become
+  uncertain and cannot be replayed through old buttons. Inspect Accounts for a
+  manual change instead.
 - Retry deadlines are held in memory and restart with the monitor. Last-success
   data persists but remains hidden until its identity is verified again.
 - Old launch receipt files may remain, but consumed tokens cannot confirm a

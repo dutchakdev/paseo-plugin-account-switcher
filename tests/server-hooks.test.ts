@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UsageSnapshot } from "../shared/contracts";
 import { SwitchRefusal } from "../server/switching";
-import { parseClaudeUsage } from "../server/usage/parsers";
+import { ContinuationCoordinator } from "../server/continuation";
+import { ContinuationObservation } from "../server/continuation-observation";
 
 const controller = vi.hoisted(() => {
   const bindNewAgent = vi.fn(async (..._args: unknown[]): Promise<unknown> => undefined);
@@ -37,7 +38,7 @@ const controller = vi.hoisted(() => {
   return {
     bindNewAgent, apply, prepare, switchTo, read, change, refresh, readings, list, cached, checksEnabled, receipts, accountOf, registry,
     instance: { ready: Promise.resolve(), ensureRuntime: vi.fn(async () => {}), switcher: () => ({ bindNewAgent, apply, prepare, switchTo }), close: vi.fn(async () => {}),
-      observeAgentRegistration: vi.fn(), store: { read, change }, usage: { refresh, list, checksEnabled }, accountOf },
+      observeAgentRegistration: vi.fn(), store: { root: "/unused-test-account-store", read, change }, usage: { refresh, list, checksEnabled }, accountOf },
   };
 });
 vi.mock("../server/controller", () => ({ AccountController: function AccountController() { return controller.instance; } }));
@@ -60,6 +61,7 @@ function paseoRecorder(agent: Record<string, unknown> = { model: null }) {
   return { appended, sent, paseo: { agents: { ref: (agentId: string) => ({
     timeline: { append: async (item: unknown) => { appended.push({ agentId, item }); return {}; } },
     refresh: async () => ({ agent: { id: agentId, provider: "codex", ...agent } }),
+    subscribe: () => () => {},
     send: async (text: string) => { sent.push({ agentId, text }); },
   }) } } };
 }
@@ -246,433 +248,52 @@ describe("Paseo's Usage view", () => {
   });
 });
 
-describe("a turn that fails on a used-up account", () => {
-  const saved = structuredClone(controller.registry);
-  const resetsAt = new Date(Date.now() + 3 * 3_600_000).toISOString();
-  const reading = (accountId: string, usedPercent: number, provider: UsageSnapshot["provider"] = "codex"): UsageSnapshot => ({
-    accountId, provider, status: "ok", plan: null, fetchedAt: null, checkedAt: new Date().toISOString(), nextRetryAt: null, error: null,
-    windows: [{ id: "5h", label: "5 hours", usedPercent, windowDurationMins: 300, resetsAt, scope: "account" }],
+describe("quota continuation lifecycle wiring", () => {
+  it("observes turn starts synchronously and delegates turn outcomes", async () => {
+    const started = vi.spyOn(ContinuationCoordinator.prototype, "started");
+    const ended = vi.spyOn(ContinuationCoordinator.prototype, "ended");
+    const { on } = startAll(), { paseo } = paseoRecorder();
+    const event = { agent: { id: "agent-1", provider: "codex", cwd: "/work", parentAgentId: null }, turnId: "turn", outcome: { kind: "completed" } };
+    try {
+      on.get("agent.turn_started")!(event, { paseo });
+      expect(started).toHaveBeenCalledWith(event, paseo);
+      await on.get("agent.turn_ended")!(event, { paseo });
+      expect(ended).toHaveBeenCalledWith(event, paseo);
+    } finally { started.mockRestore(); ended.mockRestore(); }
   });
-  const readings = (...items: UsageSnapshot[]) => controller.readings.splice(0, controller.readings.length, ...items);
-  const cached = (...items: UsageSnapshot[]) => controller.cached.splice(0, controller.cached.length, ...items);
-  const ended = (outcome: object = { kind: "failed", error: { message: "Provider error" } }, agentId = "agent-1", provider = "codex") =>
-    ({ agent: { id: agentId, workspaceId: null, parentAgentId: null, provider, cwd: "/work", title: null }, turnId: "turn-7", outcome, timeline: [] });
-  // A Claude agent on "Claude Work", with "Claude Second" to switch to.
-  const onClaude = () => {
-    const managed = controller.registry.accounts[1];
-    controller.registry.accounts.push(
-      { ...managed, id: "system-claude", label: "Current CLI · Claude", source: "system", provider: "claude", home: "/home/me/.claude" },
-      { ...managed, id: "claude-work", label: "Claude Work", provider: "claude", home: "/profiles/claude-work" },
-      { ...managed, id: "claude-second", label: "Claude Second", provider: "claude", home: "/profiles/claude-second" });
-    controller.registry.bindings = [{ agentId: "agent-1", provider: "claude", currentAccountId: "claude-work", launchAccountId: "claude-work" }];
-  };
-  // How Paseo reports a Claude turn that hit its limit: the SDK's error result has subtype "success".
-  const claudeCompleted = (turnId = "turn-7") => ({ ...ended({ kind: "completed" }, "agent-1", "claude"), turnId });
-  // A Claude reading as the plugin's parser builds it from the usage endpoint: the 5-hour window full, and, when given,
-  // paid extra usage at `spent` percent of its monthly limit.
-  const claudeReading = (accountId: string, spent?: number, fiveHourReset = resetsAt): UsageSnapshot => ({
-    accountId, provider: "claude", status: "ok", plan: null, fetchedAt: null, checkedAt: new Date().toISOString(), nextRetryAt: null, error: null,
-    windows: parseClaudeUsage({
-      five_hour: { utilization: 100, resets_at: fiveHourReset }, seven_day: { utilization: 20, resets_at: fiveHourReset },
-      ...(spent === undefined ? {} : { extra_usage: { is_enabled: true, monthly_limit: 50000, used_credits: spent * 500, utilization: spent, currency: "USD", decimal_places: 2 } }),
-    }).windows,
+  it("connects canceled hooks and foreground recovery to the shared observation stop gate", async () => {
+    const canceled=vi.spyOn(ContinuationObservation.prototype,"canceled");
+    const permitted=vi.spyOn(ContinuationObservation.prototype,"permitsRecovery").mockResolvedValue(false);
+    const {on}=startAll(),{paseo,sent}=paseoRecorder();
+    const event={agent:{id:"agent-1",provider:"claude",cwd:"/work",parentAgentId:null},turnId:"turn",outcome:{kind:"completed"}};
+    try{
+      on.get("agent.turn_ended")!({...event,outcome:{kind:"canceled"}},{paseo});
+      expect(canceled).toHaveBeenCalledWith("agent-1");
+      on.get("agent.turn_started")!(event,{paseo});on.get("agent.turn_ended")!(event,{paseo});
+      await vi.waitFor(()=>expect(permitted).toHaveBeenCalledWith(paseo,"agent-1"));expect(sent).toEqual([]);
+    }finally{canceled.mockRestore();permitted.mockRestore();}
   });
-  const rowId = "account-failover-agent-1-turn-7";
-  const rows = (appended: { item: any }[]) => appended.filter(entry => entry.item.kind === "account-failover").map(entry => entry.item);
-  const busy = "Wait for the agent to finish its response.";
-
-  beforeEach(() => { readings(reading("work", 100), reading("second", 10)); cached(); });
-  afterEach(() => {
-    Object.assign(controller.registry, structuredClone(saved));
-    controller.read.mockImplementation(async () => controller.registry);
-    controller.apply.mockReset(); controller.apply.mockImplementation(async (agentId: string) => ({ agentId, provider: "codex", currentAccountId: "second" }));
-    controller.prepare.mockClear(); controller.switchTo.mockClear(); controller.refresh.mockClear(); controller.list.mockClear(); controller.receipts.clear();
+  it("invalidates pending recovery on permissions, archives and manual selections", async () => {
+    const invalidated = vi.spyOn(ContinuationCoordinator.prototype, "invalidate");
+    const { on, handlers } = startAll(), { paseo } = paseoRecorder();
+    try {
+      on.get("agent.permission_requested")!({ agent: { id: "agent-1" } }, { paseo });
+      on.get("agent.archived")!({ agent: { id: "agent-1" } }, { paseo });
+      await handlers.get("switch.prepare")!({ agentId: "agent-1", accountId: "second" }, { paseo });
+      expect(invalidated.mock.calls.filter(([id]) => id === "agent-1")).toHaveLength(3);
+    } finally { invalidated.mockRestore(); }
   });
-
-  it("reads no account and offers no switch while the host's usage checks are off", async () => {
-    const { on } = startAll();
-    const { paseo, appended } = paseoRecorder();
-    readings(reading("work", 100), reading("second", 10));
-    controller.checksEnabled.mockResolvedValueOnce(false);
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(controller.refresh).not.toHaveBeenCalled();
-    expect(rows(appended)).toEqual([]);
-  });
-  it("refreshes the agent's account and offers a switch to the account with room", async () => {
-    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(controller.refresh).toHaveBeenCalledWith("work");
-    expect(appended).toEqual([{ agentId: "agent-1", item: { type: "plugin", id: rowId, kind: "account-failover", version: 1,
-      data: { rowId, state: "offered", from: "Work", fromId: "work", to: "Second", toId: "second", resetsAt, error: null } } }]);
-    expect(controller.apply).not.toHaveBeenCalled();
+  it("refuses old and forged recovery rows instead of reconstructing an offer", async () => {
+    const { handlers } = startAll(), { paseo, sent } = paseoRecorder();
+    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId: "account-failover-agent-1-old" }, { paseo })).rejects.toThrow(/\/account/);
     expect(sent).toEqual([]);
   });
-  it("says so when no other account has room", async () => {
-    readings(reading("work", 100), reading("second", 100), reading("system-codex", 100));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(rows(appended)).toEqual([expect.objectContaining({ data: expect.objectContaining({ state: "none", from: "Work", to: null, toId: null, resetsAt }) })]);
-  });
-  it("treats an agent without a binding as running on its provider's Current CLI account", async () => {
-    controller.registry.bindings = [];
-    readings(reading("system-codex", 100), reading("work", 50), reading("second", 10));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(controller.refresh).toHaveBeenCalledWith("system-codex");
-    expect(rows(appended)[0].data).toMatchObject({ state: "offered", from: "Current CLI · Codex", to: "Second", toId: "second" });
-  });
-  it("adds nothing for a completed Codex turn or a canceled turn, without refreshing anything", async () => {
-    // Codex reports a limit stop as a failed turn, so even a used-up account's completed turn is left alone.
-    cached(reading("work", 100));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended({ kind: "completed" }), { paseo });
-    await on.get("agent.turn_ended")!(ended({ kind: "canceled", reason: "user" }), { paseo });
-    onClaude();
-    await on.get("agent.turn_ended")!(ended({ kind: "canceled", reason: "user" }, "agent-1", "claude"), { paseo });
-    expect(appended).toEqual([]);
-    expect(controller.refresh).not.toHaveBeenCalled();
-  });
-
-  it("checks a completed Claude turn whose account the last reading shows used up, and offers the switch", async () => {
-    onClaude();
-    cached(reading("claude-work", 100, "claude"));
-    readings(reading("claude-work", 100, "claude"), reading("claude-second", 10, "claude"));
-    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
-    expect(controller.refresh).toHaveBeenCalledWith("claude-work");
-    expect(rows(appended).map(item => item.data)).toEqual([{ rowId, state: "offered", from: "Claude Work", fromId: "claude-work", to: "Claude Second", toId: "claude-second", resetsAt, error: null }]);
-    expect(controller.apply).not.toHaveBeenCalled();
-    expect(sent).toEqual([]);
-  });
-  it("leaves an ordinary completed Claude turn alone without a provider request", async () => {
-    onClaude();
-    cached(reading("claude-work", 40, "claude"), reading("claude-second", 10, "claude"));
-    readings(reading("claude-work", 100, "claude"), reading("claude-second", 10, "claude"));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
-    // Never read at all is no reason to read either.
-    cached();
-    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
-    expect(controller.list).toHaveBeenCalledTimes(2);
-    expect(controller.refresh).not.toHaveBeenCalled();
-    expect(appended).toEqual([]);
-  });
-  it("adds nothing for a completed Claude turn when the fresh reading shows room after all", async () => {
-    onClaude();
-    cached(reading("claude-work", 100, "claude"));
-    readings(reading("claude-work", 30, "claude"), reading("claude-second", 10, "claude"));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
-    expect(controller.refresh).toHaveBeenCalledWith("claude-work");
-    expect(appended).toEqual([]);
-  });
-  // With extra usage on, Claude keeps answering past a full 5-hour window, paid from the monthly spend allowance.
-  it("leaves a completed Claude turn alone while the account's extra usage has room", async () => {
-    onClaude();
-    expect(claudeReading("claude-work", 40).windows.map(window => [window.id, window.scope, window.usedPercent])).toEqual([["five_hour", "account", 100], ["seven_day", "account", 20], ["extra_usage", "spend", 40]]);
-    cached(claudeReading("claude-work", 40));
-    readings(claudeReading("claude-work", 40), reading("claude-second", 10, "claude"));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
-    expect(controller.refresh).not.toHaveBeenCalled();
-    expect(appended).toEqual([]);
-    // Extra usage turned on since the last reading: the fresh reading says so.
-    cached(claudeReading("claude-work"));
-    await on.get("agent.turn_ended")!(claudeCompleted("turn-8"), { paseo });
-    expect(controller.refresh).toHaveBeenCalledWith("claude-work");
-    expect(appended).toEqual([]);
-  });
-  it("offers the switch on a completed Claude turn once the extra usage is spent too", async () => {
-    onClaude();
-    cached(claudeReading("claude-work", 100));
-    readings(claudeReading("claude-work", 100), reading("claude-second", 10, "claude"));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
-    expect(rows(appended).map(item => item.data)).toEqual([expect.objectContaining({ state: "offered", from: "Claude Work", toId: "claude-second", resetsAt })]);
-  });
-  it("offers a used-up account once per exhaustion, not after every completed turn", async () => {
-    onClaude();
-    cached(claudeReading("claude-work"));
-    readings(claudeReading("claude-work"), reading("claude-second", 10, "claude"));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(claudeCompleted("turn-7"), { paseo });
-    await on.get("agent.turn_ended")!(claudeCompleted("turn-8"), { paseo });
-    expect(rows(appended).map(item => [item.id, item.data.state])).toEqual([[rowId, "offered"]]);
-    // The next time the account runs out, with a later reset, is offered again.
-    const later = new Date(Date.parse(resetsAt) + 5 * 3_600_000).toISOString();
-    cached(claudeReading("claude-work", undefined, later));
-    readings(claudeReading("claude-work", undefined, later), reading("claude-second", 10, "claude"));
-    await on.get("agent.turn_ended")!(claudeCompleted("turn-9"), { paseo });
-    expect(rows(appended).map(item => [item.id, item.data.resetsAt])).toEqual([[rowId, resetsAt], ["account-failover-agent-1-turn-9", later]]);
-  });
-  it("checks a failed Claude turn as a failed Codex one, without waiting for the last reading", async () => {
-    onClaude();
-    readings(reading("claude-work", 100, "claude"), reading("claude-second", 10, "claude"));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(undefined, "agent-1", "claude"), { paseo });
-    expect(controller.list).not.toHaveBeenCalled();
-    expect(rows(appended).map(item => item.data.state)).toEqual(["offered"]);
-  });
-  it("switches automatically after a completed Claude turn without asking the agent to continue", async () => {
-    onClaude();
-    controller.registry.autoFailover.claude = true;
-    controller.apply.mockImplementation(async (agentId: string) => ({ agentId, provider: "claude", currentAccountId: "claude-second" }));
-    cached(reading("claude-work", 100, "claude"));
-    readings(reading("claude-work", 100, "claude"), reading("claude-second", 10, "claude"));
-    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
-    await vi.waitFor(() => expect(rows(appended).at(-1).data.state).toBe("auto"));
-    expect(controller.prepare).toHaveBeenCalledWith("agent-1", "claude-second");
-    expect(controller.apply).toHaveBeenCalledWith("agent-1", "claude-second");
-    expect(rows(appended).map(item => item.data.state)).toEqual(["switching", "auto"]);
-    // The turn may have ended for real, so nothing is sent; the row says where the next message runs.
-    expect(rows(appended).at(-1).data).toEqual({ rowId, state: "auto", from: "Claude Work", fromId: "claude-work", to: "Claude Second", toId: "claude-second", resetsAt, error: null, resumes: false });
-    await new Promise(resolve => setTimeout(resolve, 20));
-    expect(sent).toEqual([]);
-    expect(appended.filter(entry => entry.item.kind !== "account-failover")).toEqual([]);
-  });
-  // An agent started with no app open has an unconfirmed binding until something reads its launch receipt.
-  it("offers the switch for an agent whose launch only its receipt confirms", async () => {
-    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
-    controller.receipts.add("agent-1");
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(controller.refresh).toHaveBeenCalledWith("work");
-    expect(rows(appended).map(item => item.data)).toEqual([expect.objectContaining({ state: "offered", from: "Work", to: "Second", toId: "second" })]);
-  });
-  it("adds nothing for an agent whose account nothing confirms", async () => {
-    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(controller.refresh).not.toHaveBeenCalled();
-    expect(appended).toEqual([]);
-  });
-  it("adds nothing when the readings do not show the account used up", async () => {
-    readings(reading("work", 80), reading("second", 10));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(appended).toEqual([]);
-  });
-  it("adds nothing while integration is off, or off for the agent's provider", async () => {
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    controller.registry.integration.enabled = false;
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    controller.registry.integration = { enabled: true, error: null, providers: ["claude"] };
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(appended).toEqual([]);
-    expect(controller.refresh).not.toHaveBeenCalled();
-  });
-  it("never throws out of the hook when the registry cannot be read", async () => {
-    const { on } = startAll(), { appended, paseo } = paseoRecorder(), error = vi.spyOn(console, "error").mockImplementation(() => {});
-    controller.read.mockRejectedValue(new Error("registry busy"));
-    try {
-      await expect(on.get("agent.turn_ended")!(ended(), { paseo })).resolves.toBeUndefined();
-      expect(appended).toEqual([]);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining("registry busy"));
-    } finally { error.mockRestore(); }
-  });
-
-  it("switches automatically when that is on for the provider, then asks the agent to continue", async () => {
-    controller.registry.autoFailover.codex = true;
-    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    // The switch outlasts Paseo's hook timeout, so it runs on after the hook returns.
-    await vi.waitFor(() => expect(sent).toEqual([{ agentId: "agent-1", text: "Continue." }]));
-    // One select-and-apply step, so a refused attempt leaves no selection behind.
-    expect(controller.switchTo).toHaveBeenCalledWith("agent-1", "second");
-    expect(controller.apply).toHaveBeenCalledWith("agent-1", "second");
-    expect(rows(appended).every(item => item.id === rowId)).toBe(true);
-    expect(rows(appended).map(item => item.data.state)).toEqual(["switching", "auto"]);
-    expect(rows(appended).at(-1).data).toEqual({ rowId, state: "auto", from: "Work", fromId: "work", to: "Second", toId: "second", resetsAt, error: null });
-    // The failover row carries the outcome; no separate "Account switched" note.
-    expect(appended.filter(entry => entry.item.kind !== "account-failover")).toEqual([]);
-  });
-  it("leaves the switch to the user while automatic switching is off for that provider", async () => {
-    controller.registry.autoFailover.claude = true;
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(controller.apply).not.toHaveBeenCalled();
-    expect(rows(appended).map(item => item.data.state)).toEqual(["offered"]);
-  });
-  it("shows the switch service's refusal when an automatic switch cannot be applied", async () => {
-    controller.registry.autoFailover.codex = true;
-    controller.apply.mockRejectedValue(new SwitchRefusal(busy));
-    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder(), error = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      await expect(on.get("agent.turn_ended")!(ended(), { paseo })).resolves.toBeUndefined();
-      await vi.waitFor(() => expect(rows(appended).at(-1).data).toMatchObject({ rowId, state: "failed", to: "Second", error: busy }));
-      // Logged once the failure reaches the hook's handler, a few ticks after the row.
-      await vi.waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringContaining(busy)));
-      expect(sent).toEqual([]);
-    } finally { error.mockRestore(); }
-  });
-  it("stops switching automatically after three switches of one agent within the hour", async () => {
-    controller.registry.autoFailover.codex = true;
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    for (const turnId of ["t1", "t2", "t3", "t4"]) {
-      // Every turn fails on a fresh account, so only the hourly limit can stop the fourth switch.
-      const from = `from-${turnId}`, to = `to-${turnId}`;
-      controller.registry.accounts.push({ ...saved.accounts[1], id: from, label: from }, { ...saved.accounts[1], id: to, label: to });
-      controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: from, launchAccountId: from }];
-      readings(reading(from, 100), reading(to, 0), reading("work", 100), reading("second", 100));
-      await on.get("agent.turn_ended")!({ ...ended(), turnId }, { paseo });
-      // Each switch settles before the next turn fails; one still under way would stop the next on its own.
-      await vi.waitFor(() => expect(rows(appended).at(-1).data.state).toMatch(/^(auto|offered)$/));
-    }
-    expect(controller.apply).toHaveBeenCalledTimes(3);
-    expect(rows(appended).filter(item => item.id === "account-failover-agent-1-t4").map(item => item.data.state)).toEqual(["offered"]);
-  });
-
-  it("leaves an unresolved automatic switch alone when the turn is reported again, with or without its id", async () => {
-    controller.registry.autoFailover.codex = true;
-    let finish!: () => void;
-    controller.apply.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ agentId: "agent-1", provider: "codex", currentAccountId: "second" }); }));
-    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    await vi.waitFor(() => expect(controller.apply).toHaveBeenCalledOnce());
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    await on.get("agent.turn_ended")!({ ...ended(), turnId: null }, { paseo });
-    expect(rows(appended).map(item => [item.id, item.data.state])).toEqual([[rowId, "switching"]]);
-    expect(controller.refresh).toHaveBeenCalledOnce();
-    finish();
-    await vi.waitFor(() => expect(sent).toEqual([{ agentId: "agent-1", text: "Continue." }]));
-    // Once switched, the same turn reported again adds nothing: the row keeps saying it switched.
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(rows(appended).map(item => [item.id, item.data.state])).toEqual([[rowId, "switching"], [rowId, "auto"]]);
-    expect(controller.prepare).toHaveBeenCalledOnce();
-    expect(controller.apply).toHaveBeenCalledOnce();
-  });
-  it("adds nothing while the agent's account is being switched elsewhere", async () => {
-    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: "work", launchAccountId: "second", status: "switching" }];
-    const { on } = startAll(), { appended, paseo } = paseoRecorder();
-    await on.get("agent.turn_ended")!(ended(), { paseo });
-    expect(appended).toEqual([]);
-    expect(controller.refresh).not.toHaveBeenCalled();
-  });
-  it("refuses a second click while the first switch is under way, leaving its row as it is", async () => {
-    let finish!: () => void;
-    controller.apply.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ agentId: "agent-1", provider: "codex", currentAccountId: "second" }); }));
-    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
-    const first = handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo });
-    await vi.waitFor(() => expect(controller.apply).toHaveBeenCalledOnce());
-    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo })).rejects.toThrow("An account switch is already in progress.");
-    expect(rows(appended).map(item => item.data.state)).toEqual(["switching"]);
-    finish();
-    await expect(first).resolves.toEqual({});
-    expect(rows(appended).map(item => item.data.state)).toEqual(["switching", "switched"]);
-  });
-
-  it("applies the offered switch from the row's button and asks the agent to continue", async () => {
-    const { handlers } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId, fromId: "work" }, { paseo })).resolves.toEqual({});
-    expect(controller.switchTo).toHaveBeenCalledWith("agent-1", "second");
-    expect(controller.apply).toHaveBeenCalledWith("agent-1", "second");
-    expect(sent).toEqual([{ agentId: "agent-1", text: "Continue." }]);
-    expect(rows(appended).every(item => item.id === rowId)).toBe(true);
-    expect(rows(appended).at(-1).data).toMatchObject({ rowId, state: "switched", from: "Work", fromId: "work", to: "Second", toId: "second", error: null });
-    expect(appended.filter(entry => entry.item.kind !== "account-failover")).toEqual([]);
-  });
-  it("applies the offer of a row from before it named the account it moves from", async () => {
-    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
-    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo })).resolves.toEqual({});
-    expect(rows(appended).at(-1).data).toMatchObject({ state: "switched", from: "Work", to: "Second" });
-  });
-  it("refuses an offer that is out of date because the agent moved to another account since", async () => {
-    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: "system-codex", launchAccountId: "system-codex" }];
-    const { handlers } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    const stale = "This offer is out of date: the agent now runs on Current CLI · Codex.";
-    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId, fromId: "work" }, { paseo })).rejects.toThrow(stale);
-    expect(controller.switchTo).not.toHaveBeenCalled();
-    expect(rows(appended).map(item => item.data)).toEqual([expect.objectContaining({ rowId, state: "failed", to: "Second", error: stale })]);
-    expect(sent).toEqual([]);
-  });
-  it("refuses an offer of the account the agent already runs on", async () => {
-    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: "second", launchAccountId: "second" }];
-    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
-    const already = "The agent already runs on Second.";
-    // A row from before it named its account gets the same answer.
-    for (const fromId of ["work", undefined]) {
-      await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId, fromId }, { paseo })).rejects.toThrow(already);
-    }
-    expect(controller.switchTo).not.toHaveBeenCalled();
-    expect(rows(appended).map(item => item.data)).toEqual([0, 1].map(() => expect.objectContaining({ state: "failed", error: already })));
-  });
-  it("shows a generic sentence in the row for an unexpected failure, and logs the detail", async () => {
-    const raw = Object.assign(new Error("EACCES: permission denied, open '/Users/me/.paseo/account-switcher/registry.json'"), { code: "EACCES" });
-    controller.apply.mockRejectedValue(raw);
-    const { handlers } = startAll(), { appended, sent, paseo } = paseoRecorder(), error = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const outcome = handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId, fromId: "work" }, { paseo });
-      await expect(outcome).rejects.toThrow("The switch failed; the plugin log has details.");
-      expect(rows(appended).at(-1).data).toMatchObject({ state: "failed", error: "The switch failed; the plugin log has details." });
-      expect(JSON.stringify(appended)).not.toContain("/Users/me");
-      expect(error).toHaveBeenCalledWith(expect.stringContaining("EACCES: permission denied, open '/Users/me/.paseo/account-switcher/registry.json'"));
-      expect(sent).toEqual([]);
-    } finally { error.mockRestore(); }
-  });
-  it("answers the button with the generic sentence when checking the offer fails unexpectedly", async () => {
-    const raw = new Error("EACCES: permission denied, open '/Users/me/.paseo/account-switcher/registry.json'");
-    const { handlers } = startAll(), { appended, paseo } = paseoRecorder(), error = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      controller.read.mockRejectedValueOnce(raw);
-      await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId, fromId: "work" }, { paseo })).rejects.toThrow(/^The switch failed; the plugin log has details\.$/);
-      controller.accountOf.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'bindings')"));
-      await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId, fromId: "work" }, { paseo })).rejects.toThrow(/^The switch failed; the plugin log has details\.$/);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining("EACCES: permission denied, open '/Users/me/.paseo/account-switcher/registry.json'"));
-      expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot read properties of undefined (reading 'bindings')"));
-      expect(controller.switchTo).not.toHaveBeenCalled();
-      expect(appended).toEqual([]);
-      // The plugin's own answers still reach the user as they are.
-      await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "missing", rowId }, { paseo })).rejects.toThrow(/^Account not found\.$/);
-      await expect(handlers.get("failover.apply")!({ agentId: "agent-2", accountId: "second", rowId }, { paseo })).rejects.toThrow(/^The switch offer belongs to another agent\.$/);
-    } finally { error.mockRestore(); }
-  });
-  it("keeps an unexpected failure of an automatic switch out of the row too", async () => {
-    controller.registry.autoFailover.codex = true;
-    controller.apply.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'agent')"));
-    const { on } = startAll(), { appended, paseo } = paseoRecorder(), error = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      await on.get("agent.turn_ended")!(ended(), { paseo });
-      await vi.waitFor(() => expect(rows(appended).at(-1).data).toMatchObject({ state: "failed", error: "The switch failed; the plugin log has details." }));
-      expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot read properties of undefined"));
-      expect(JSON.stringify(rows(appended))).not.toContain("Cannot read");
-    } finally { error.mockRestore(); }
-  });
-  it("turns the row into the refusal when the agent started another turn or waits for a permission", async () => {
-    controller.apply.mockRejectedValue(new SwitchRefusal(busy));
-    const { handlers } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo })).rejects.toThrow(busy);
-    expect(rows(appended).at(-1).data).toMatchObject({ rowId, state: "failed", to: "Second", error: busy });
-    expect(sent).toEqual([]);
-  });
-  it("applies the button's switch for an agent whose launch only its receipt confirms", async () => {
-    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
-    controller.receipts.add("agent-1");
-    const { handlers } = startAll(), { appended, sent, paseo } = paseoRecorder();
-    await expect(handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo })).resolves.toEqual({});
-    expect(controller.apply).toHaveBeenCalledWith("agent-1", "second");
-    expect(rows(appended).at(-1).data).toMatchObject({ state: "switched", from: "Work", to: "Second" });
-    expect(sent).toEqual([{ agentId: "agent-1", text: "Continue." }]);
-  });
-  it("refuses the button's switch, saying why, when nothing confirms the agent's account", async () => {
-    controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: null, launchAccountId: "work" }];
-    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
-    const outcome = handlers.get("failover.apply")!({ agentId: "agent-1", accountId: "second", rowId }, { paseo });
-    await expect(outcome).rejects.toThrow("This agent's account is not confirmed yet.");
-    await expect(outcome).rejects.not.toThrow("Account not found.");
-    expect(controller.prepare).not.toHaveBeenCalled();
-    expect(appended).toEqual([]);
-  });
-  it("refuses a row that belongs to another agent", async () => {
-    const { handlers } = startAll(), { appended, paseo } = paseoRecorder();
-    await expect(handlers.get("failover.apply")!({ agentId: "agent-2", accountId: "second", rowId }, { paseo })).rejects.toThrow();
-    expect(controller.apply).not.toHaveBeenCalled();
-    expect(appended).toEqual([]);
-  });
-
   it("saves the automatic switching choice per provider", async () => {
-    const { handlers } = startAll();
-    await expect(handlers.get("accounts.auto-failover")!({ provider: "codex", enabled: true }, { paseo: {} })).resolves.toEqual({});
-    expect(controller.registry.autoFailover).toEqual({ claude: false, codex: true });
+    const before = structuredClone(controller.registry.autoFailover);
+    try {
+      const { handlers } = startAll();
+      await expect(handlers.get("accounts.auto-failover")!({ provider: "codex", enabled: true }, { paseo: {} })).resolves.toEqual({});
+      expect(controller.registry.autoFailover.codex).toBe(true);
+    } finally { controller.registry.autoFailover = before; }
   });
 });

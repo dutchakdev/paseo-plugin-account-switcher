@@ -443,3 +443,48 @@ describe("an account named when the agent is created",()=>{
   expect((await launched(store,"bound"))?.launchAccountId).toBe(target.id);
  });
 });
+
+describe("a saved recovery operation's native switch guards",()=>{
+ const recovery=(guard=vi.fn(async(_stage:string)=>{}),afterConfirmed=vi.fn(async()=>{}))=>({guard,afterConfirmed});
+ it("cancels after the official account probe without reloading or leaving an automatic selection",async()=>{
+  const {store,target}=await fixture(),reload=vi.fn(async(id:string)=>writeReceipt(store,id));
+  const operation=recovery(vi.fn(async stage=>{if(stage==="afterAccountCheck")throw new SwitchRefusal("activity changed");}));
+  await expect(makeService(store,{reload}).switchTo("auto",target.id,operation)).rejects.toThrow("activity changed");
+  expect(reload).not.toHaveBeenCalled();expect(operation.afterConfirmed).not.toHaveBeenCalled();expect((await store.read()).bindings).toEqual([]);
+ });
+ it("checks immediately before native reload and never reloads a canceled operation for rollback",async()=>{
+  const {store,target}=await fixture(),reload=vi.fn(async(id:string)=>writeReceipt(store,id));
+  const operation=recovery(vi.fn(async stage=>{if(stage==="beforeReload")throw new SwitchRefusal("permission pending");}));
+  await expect(makeService(store,{reload}).switchTo("auto",target.id,operation)).rejects.toThrow("permission pending");
+  expect(reload).not.toHaveBeenCalled();expect(operation.afterConfirmed).not.toHaveBeenCalled();
+  expect((await store.read()).bindings[0]).toMatchObject({currentAccountId:"system-codex",status:"error",launchToken:null});
+ });
+ it("requires the matching launch-token receipt before continuation",async()=>{
+  const {store,target}=await fixture(),operation=recovery(),reload=vi.fn(async()=>{});
+  await expect(makeService(store,{reload}).switchTo("auto",target.id,operation)).rejects.toThrow(/did not confirm/);
+  expect(operation.afterConfirmed).not.toHaveBeenCalled();expect(operation.guard.mock.calls.map(([stage])=>stage)).not.toContain("afterReceipt");
+  expect(reload).toHaveBeenCalledTimes(1);
+ });
+ it("rechecks activity after the receipt and suppresses continuation on a late user turn",async()=>{
+  const {store,target}=await fixture(),reload=vi.fn(async(id:string)=>writeReceipt(store,id));
+  const operation=recovery(vi.fn(async stage=>{if(stage==="afterReceipt")throw new SwitchRefusal("new user turn");}));
+  await expect(makeService(store,{reload}).switchTo("auto",target.id,operation)).rejects.toThrow("new user turn");
+  expect(operation.afterConfirmed).not.toHaveBeenCalled();expect(reload).toHaveBeenCalledTimes(1);
+  expect((await store.read()).bindings[0]).toMatchObject({currentAccountId:null,status:"error",launchToken:null});
+ });
+ it("holds the shared switch lock until sending and its journal write finish",async()=>{
+  const {store,target}=await fixture(),wait=deferred(),entered=deferred(),service=makeService(store);
+  const operation=recovery(undefined,vi.fn(async()=>{entered.resolve();await wait.promise;}));
+  const running=service.switchTo("auto",target.id,operation);await entered.promise;
+  await expect(service.prepare("auto","system-codex")).rejects.toThrow(/already in progress/);
+  await expect(service.apply("auto")).rejects.toThrow(/already in progress/);
+  wait.resolve();await running;await expect(service.prepare("auto","system-codex")).resolves.toMatchObject({pendingAccountId:"system-codex"});
+ });
+ it("an uncertain continuation send preserves the switched account without a second reload",async()=>{
+  const {store,target}=await fixture(),reload=vi.fn(async(id:string)=>writeReceipt(store,id));
+  const operation=recovery(undefined,vi.fn(async()=>{throw new Error("send uncertain");}));
+  await expect(makeService(store,{reload}).switchTo("auto",target.id,operation)).rejects.toThrow("send uncertain");
+  expect((await store.read()).bindings[0]).toMatchObject({currentAccountId:target.id,status:"ready",launchToken:null});
+  expect(reload).toHaveBeenCalledTimes(1);
+ });
+});

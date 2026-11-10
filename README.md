@@ -22,18 +22,20 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 
 ## Requirements
 
-- **Paseo 0.11.0 or newer**, including beta releases after 0.11.0, on a **macOS or Linux** daemon and on the connected client.
+- **Paseo 0.15.3 or newer**, on a **macOS or Linux** daemon and on the connected client.
 - **Node.js 22.12.0 or newer**, with npm.
 - The official **Paseo** CLI and at least one of **Claude Code** or **Codex** available to the daemon. A provider whose CLI is missing is skipped; after installing it, reload the plugin and select **Enable** in its section.
 - Claude or ChatGPT subscription authentication. API keys and custom authentication/provider overrides are unsupported.
+
+The development SDK remains pinned to 0.15.4. Source comparison with 0.15.3 confirms that the plugin, timeline, hook, send and reload contracts used here are unchanged; requiring 0.15.4 would unnecessarily hide Accounts on a 0.15.3 client.
 
 The interface is in English. Reset dates use the viewing device's local time zone. See [installation](docs/installation.md) for remote hosts and [verification](docs/verification.md) for the scope of recorded testing.
 
 ## Install
 
-Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude and Codex sign-ins to identify accounts and check their limits, and checking limits sends no model messages. The only message it sends to an agent is **Continue.**, after you switch from the row a used-up limit adds to the chat, or after an automatic switch that followed a failed turn. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
+Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude and Codex sign-ins to identify accounts and check their limits, and checking limits sends no model messages. The only message it sends to an agent is **Continue.**, after you switch from the row a used-up limit adds to the chat, or after an automatic switch of a verified quota-interrupted turn. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
 
-On Paseo 0.11.0 or a later release, install the reviewed version from the plugin directory:
+On Paseo 0.15.3 or a later release, install the reviewed version from the plugin directory:
 
 ```sh
 paseo plugin add dutchakdev/account-switcher
@@ -45,7 +47,7 @@ npm gets a new version before the directory approves it:
 paseo plugin install npm:paseo-plugin-account-switcher
 ```
 
-Paseo 0.8 to 0.10 and the 0.11.0 betas refuse the manifest's `icon` field. They can stay on 0.5.0, the last release for them, installed from GitHub. Paseo then runs the manifest's dependency and build steps on the daemon:
+Paseo 0.11–0.15.2 users can stay on Account Switcher 0.10.2. Paseo 0.8 to 0.10 and the 0.11.0 betas refuse the manifest's `icon` field. They can stay on 0.5.0, the last release for them, installed from GitHub. Paseo then runs the manifest's dependency and build steps on the daemon:
 
 ```sh
 paseo plugin install dutchakdev/paseo-plugin-account-switcher --ref v0.5.0
@@ -147,21 +149,17 @@ Different agents can use different accounts in parallel. Avoid sending from anot
 
 ## When a limit runs out during a chat
 
-When a Claude or Codex turn ends because its account's limit is used up, the plugin reads the agent's account again. Codex reports such a turn as failed. Claude reports it as completed, like any other turn, so for a completed Claude turn the plugin first looks at its last reading of the account and reads again only when that already shows the account used up; an ordinary turn costs no provider request. The chat gets a row only if the new reading proves the account is used up: an account-wide limit such as the 5-hour or weekly window is at 100% with its reset still ahead, or Codex reports that ordinary usage is not allowed. Other failures, such as a network error, a tool failure, a plan without the agent's model, or a limit of a single model, add nothing. A Claude account with extra usage turned on keeps answering past a full 5-hour window, paid from its monthly spend allowance; while that allowance has room, a completed Claude turn adds nothing. One used-up account gets one row: later turns on the same account before the same reset add none, and the next time it runs out it is offered again.
+A stopped turn is eligible only with both a current-turn interruption signal and a fresh reading proving account-wide quota exhaustion. Ordinary completed Claude turns never switch or restart merely because a cached quota is full. Codex requires an explicit quota failure code. Claude requires a terminal native assistant error with `isApiErrorMessage: true` and `error: "rate_limit"` on the current parent chain. Model-credit errors, prose, tool output, historical errors and ordinary rate-limit notifications do not qualify.
 
-- With another account available: *Work's limit is used up until 18:00.* and a button **Switch to Second and continue**. The time is the latest reset among the used-up windows, in your local time zone; without a reset time from the provider, the sentence ends at *used up*.
-- Without one: *Work's limit is used up until 18:00. No other account has room.*
+The Claude reader matches an observed terminal assistant ID to the native error's `message.id` or exact record UUID, then checks its parent branch. Foreground hooks use the current turn's final assistant; an owned live subscription also covers background Claude work that emits no turn hooks. The live observer arms only after its session/account baseline and subscription are ready, accepts future assistant callbacks only, and requires a native error timestamp no older than that boundary. It never scans old history to resume a pre-existing failure. Paseo 0.15.4 rewrites user IDs and returns projected history even when canonical history is requested; assistant IDs remain intact. The reader opens only the bound profile's exact native session, reads at most 8 MiB, and verifies file identity and timestamps. These private JSONL fields were checked with Claude Code 2.1.321 using an isolated local synthetic 429 endpoint. Unknown formats, missing foreground turn or live session evidence, a moved transcript or an incomplete parent chain cause recovery to be skipped. Only the exact transcript-only system task queue bookkeeping shape is skipped; executed notifications and real new inputs still block an older error. No prompt, conversation text or credential is copied into recovery records.
 
-The offered account is the one a new agent would try instead: a signed-in account of the same provider, not in the middle of a sign-in, not used up, and for Codex with a plan that offers the agent's model. If several qualify, the one with the most room is offered. Agents on **Current CLI** are included. An agent started while no Paseo app was open, by a schedule or `paseo run`, is included too: the plugin confirms its account from the launcher's startup receipt first. An agent whose account nothing confirms gets no row. Nothing is offered while account switching is off for that provider (**Account switching** in Accounts).
+With **When a limit runs out during a chat → Switch automatically**, Accounts refreshes the source and replacement limits, selects a signed-in account of the same provider with a different verified identity and known remaining quota, reloads the existing agent, checks the launch receipt, and sends **Continue.** once. The model and native session must stay the same. Stale or unknown quota is not enough to choose a replacement. Known model incompatibility is rejected; Claude does not report a model list, so its model access cannot be independently prevalidated.
 
-The button switches the chat through the same checks as **Apply** and `/account` (the agent is idle, no permission request is pending, the new account is confirmed at startup), then sends the agent **Continue.** The row follows: *Switching from Work to Second…*, then *Switched from Work to Second.* If the switch is refused or fails, the row says *Could not switch to Second* with the reason:
+With **Offer a switch**, the row's button references the same server-owned recovery record and uses the same checks. Old rows without such a record cannot trigger continuation; use the ordinary account switcher for a manual change. **Apply** and `/account` still switch only, without sending a continuation message.
 
-- A refusal before the reload, such as an agent that is responding again, changes nothing and leaves no selection behind.
-- A failure once the reload has started tries to restore the previous account, as with **Apply**.
-- An offer that is out of date is refused: the chat has moved to another account since (*This offer is out of date: the agent now runs on Personal.*), or it already runs on the offered one.
-- An unexpected error shows *The switch failed; the plugin log has details.* Its text, which can name files, goes only to the plugin log.
+New user activity, cancellation, a permission request, archive, changed session/model or account identity invalidates a pending recovery. The per-agent lock covers switching and continuation. Exact Claude native-error keys (foreground turn keys for Codex) and a private atomic journal prevent repeated events, double-clicks and plugin reloads from resending the continuation. The journal records the send intent and message ID before sending. An interrupted or uncertain send is not retried automatically. If recovery is canceled after reload begins, it leaves account uncertainty visible for manual inspection instead of issuing another reload that might interrupt new user work. Quota recovery is limited to three attempts per agent in a rolling hour, without returning to an identity left in that hour.
 
-To skip the click, set **When a limit runs out during a chat** to **Switch automatically** under a provider in Accounts. The control appears for a provider with more than one account, and the default is **Offer a switch**. The chat then switches and continues by itself, and the row reads *Switched automatically from Work to Second.* After a completed Claude turn the plugin switches but does not send **Continue.**, because the turn may really have finished; the row reads *Switched automatically from Work to Second. Your next message runs on Second.* The plugin limits this to one automatic switch per turn and three per agent per hour, and never moves an agent back to an account it left within that hour; when a limit stops it, the chat shows the usual offer instead. Like the other chat lines, these rows live in the daemon's memory and are best effort.
+Paseo 0.15.4 has no atomic “send only if still idle on this session” request. The plugin checks immediately before sending and uses non-interrupting `steer` delivery, but a simultaneous message from another client can still race that final check. Reload has the same host-level race. These safeguards are not a cross-client transaction. Plugin reload and subscription reconnect never replay pre-existing failures; background recovery applies only to future live errors after a fresh baseline. A cancellation keeps live recovery disarmed until the host reports newer user input or a different native session; that stop marker is in memory and does not survive plugin reload.
 
 ## Read limits
 
