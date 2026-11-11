@@ -77,6 +77,6 @@ describe("account status line", () => {
   it("maps every stored auth status", () => {
     expect(accountStatus(account({ authStatus: "needs_auth" }), undefined).tone).toBe("warning");
     expect(accountStatus(account({ authStatus: "unknown" }), undefined).tone).toBe("muted");
-    expect(accountStatus(account({ authStatus: "error" }), undefined)).toEqual({ text: "sign-in error", tone: "danger" });
+    expect(accountStatus(account({ authStatus: "error" }), undefined)).toEqual({ text: "sign-in unavailable", tone: "warning" });
   });
 });

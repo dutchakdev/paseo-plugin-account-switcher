@@ -5,7 +5,8 @@ Limits cover every window the provider reports, such as 5-hour and weekly use, w
 ## How it works
 
 - Each account you add gets its own credential profile. Settings, skills, and session history stay shared with your existing CLI setup, so a profile is not a sandbox.
-- **Enable** in Accounts points Paseo's Claude and Codex commands at the plugin's launchers, which start the official CLI under the agent's account. **Disable** restores the original commands; use it before removing the plugin.
+- Turn on **Account switching** in Accounts to point Paseo's Claude and Codex commands at the plugin's launchers, which start the official CLI under the agent's account. Turning it off restores the original commands; do this before removing the plugin.
+- Open **Manage** to check sign-in, refresh limits, rename an added account, or make it the default. Each added account has a visible **Remove** button with confirmation and an explanation of any blockers. **Current CLI** entries use the host's own sign-in and cannot be removed here.
 - A new agent starts on its provider's default account. When the latest readings show the default has used up an account-wide limit that resets later, Codex reports that ordinary usage is not allowed, its plan lacks the Codex model chosen for the agent, or the default needs sign-in, the agent starts on the signed-in account with the largest percentage left instead. Limits of a single model and extra paid usage do not count. With every account ruled out, it stays on the default. **Always use the default** under a provider in Accounts turns this off, so the default stays binding.
 - A tool that creates agents can name the account to start on: an agent created with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in its environment, set to an account's name or ID, starts on that account whatever its limits. It is not created when that account cannot be used, or when **Always use the default** is on and that account is not the default.
 - `/account name` in the message field switches the chat's account, or `/account default` its provider's default: at once when the agent is idle, otherwise in the switcher for **Apply**. The Command Center offers **Make “name” the default** for each signed-in account.
@@ -37,6 +38,7 @@ Limits cover every window the provider reports, such as 5-hour and weekly use, w
 - Paseo's Usage view can show one managed account twice: after you open the usage details of an agent on that account, Paseo's own Claude or Codex card for the login can appear next to the Account Switcher card. The plugin cannot merge cards of different sources.
 - Plans differ in the models they offer: after a switch to a plan without the agent's model, its next message fails. For Codex, the switcher compares the agent's model with the models the account's plan offers and warns before **Apply**. Claude does not report its models, so there is no such check for Claude.
 - Codex's **In browser** sign-in must finish on the daemon's computer. From another device, use **Device code**.
+- Claude credentials in an inaccessible macOS Keychain show as **sign-in unavailable**. Unlock Keychain in the daemon's session, then check sign-in again. A daemon started from SSH may not share the desktop's access. If the official CLI cannot renew an expired token, sign in again.
 - Providers can change their limit formats. Values the plugin cannot read show as no data.
 
 ## Other plugins by dutchakdev

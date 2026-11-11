@@ -102,7 +102,7 @@ Use your installation's host throughout. A daemon restart is unnecessary. A fail
 
 ## Disable or remove
 
-1. In **Accounts**, select **Disable** to restore the original provider commands.
+1. In **Accounts**, turn off **Account switching** to restore the original provider commands.
 2. Disable the plugin on the same daemon:
 
    ```sh
@@ -121,7 +121,7 @@ Disabling integration leaves running chats alone; their next reload uses the sys
 
 Removal leaves a local checkout in place but deletes Paseo's managed copy of a plugin directory, npm, or Git installation. In every case, Account Switcher's separate data directory remains. To delete a managed profile and its credentials, remove the account in Accounts **before** removing the plugin. Shared provider history is retained. See [stored data](architecture.md#stored-data) for the paths and deletion boundary.
 
-To resume after disabling, enable the plugin, confirm it is running, then select **Enable** in Accounts:
+To resume after disabling, enable the plugin, confirm it is running, then turn on **Account switching** in Accounts:
 
 ```sh
 paseo plugin enable account-switcher --host 127.0.0.1:6767
@@ -145,7 +145,8 @@ paseo plugin enable account-switcher --host 127.0.0.1:6767
 | Limits stopped updating and Accounts says Check usage is off | The host's **Check usage** setting is off. The plugin makes no limit requests and offers no switch until it is on again. |
 | Account not confirmed | Select the intended account and apply it again while idle. Check the native agent status if reload still fails. |
 | Limits are stale or unavailable | Read the account error, freshness, and retry time. **Refresh** respects backoff; expired authentication needs sign-in. Unreported values are not inferred. |
-| Remove or sign-in is blocked | Clear the account's default and pending selections, and switch all bound agents away. Archived agents also retain bindings. An agent that failed to start holds its account for at least 10 minutes. |
+| Remove or sign-in is blocked | Select the account’s visible **Remove** button to see the blockers. Clear its default and pending selections, and switch all bound agents away. Archived agents also retain bindings. An agent that failed to start holds its account for at least 10 minutes. |
+| Claude says sign-in is unavailable | Read the credential-access error. An inaccessible macOS Keychain is different from signing out; restore access before using **Check sign-in**. See below for background daemons. |
 
 For loading failures:
 
@@ -157,3 +158,32 @@ paseo plugin logs account-switcher --host 127.0.0.1:6767
 A new agent that fails before registering in Paseo leaves an unconfirmed account reservation. The plugin releases it on a later check, at least 10 minutes after the start, once no CLI of that launch still runs and Paseo answers that the agent is gone. It does not release a potentially occupied profile merely because time has passed. Bindings for normally deleted agents are removed only after checking the complete agent list and the agent itself; archived bindings remain for resume.
 
 When reporting a problem, include versions, sanitized errors, and reproduction steps. Remove account identities, authorization links, one-time codes, tokens, and local paths you do not want to publish.
+
+### Claude credentials and background macOS daemons
+
+A locked or inaccessible Keychain can make `claude auth status --json` report
+`loggedIn: false` even though its saved sign-in still exists. Recent CLIs may
+leave subscription metadata with empty tokens in `.credentials.json`; that file
+cannot replace the inaccessible Keychain entry. Accounts reports **sign-in
+unavailable** in this case and refuses switching until the official CLI can
+confirm the account again.
+
+Unlock the login Keychain for the daemon's execution context. A daemon started
+from SSH or another background session may not share the desktop's access.
+In a terminal belonging to that Paseo daemon, run:
+
+```sh
+security unlock-keychain ~/Library/Keychains/login.keychain-db
+```
+
+Enter the Keychain password directly at the hidden terminal prompt. Do not put
+it in command arguments, environment variables, scripts, or chat. If the command
+reports an incorrect password, the Keychain remains locked; its password may
+not match the current macOS login password. After a successful unlock, select
+**Check sign-in**, then **Refresh**. Provider retry delays still apply.
+
+If this session still cannot read Keychain, use an isolated account through
+**Add account** and the official provider sign-in. To change how the daemon is
+launched, first finish running agents and arrange a separate daemon restart;
+reloading this plugin does not change the daemon's security context. Apple
+explains the distinction in [Daemons and Agents (TN2083)](https://developer.apple.com/library/archive/technotes/tn2083/_index.html).

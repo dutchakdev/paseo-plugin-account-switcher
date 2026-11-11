@@ -136,10 +136,11 @@ function DetailLine({ theme, children }: ThemeProps & { children: ReactNode }) {
  * Compact quota block: measured windows first, then one disclosure with the windows without data,
  * exact reset times, quota lengths and fetch timestamps. Errors and freshness are always visible.
  */
-export function QuotaSummary({ theme, snapshot, now, compact, onRefresh, refreshing }: ThemeProps & {
-  snapshot: UsageSnapshot | undefined; now: number; compact: boolean; onRefresh?: () => void; refreshing?: boolean;
+export function QuotaSummary({ theme, snapshot, now, compact, onRefresh, refreshing, hideAuth }: ThemeProps & {
+  snapshot: UsageSnapshot | undefined; now: number; compact: boolean; onRefresh?: () => void; refreshing?: boolean; hideAuth?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  if (hideAuth && snapshot?.status === "needs_auth") return null;
   const { known, unknown } = snapshot ? splitWindows(snapshot.windows) : { known: [], unknown: [] };
   const fresh = freshness(snapshot, now);
   const detailsTitle = unknown.length ? `${unknown.length} more without data · details` : "Details";
@@ -148,7 +149,7 @@ export function QuotaSummary({ theme, snapshot, now, compact, onRefresh, refresh
       {known.map((quota) => <View key={quota.id} style={{ flexGrow: 1, flexBasis: compact ? "100%" : "46%", minWidth: 0 }}>
         <QuotaWindowRow theme={theme} quota={quota} now={now} />
       </View>)}
-    </View> : snapshot && snapshot.status !== "needs_auth" ? <Text style={muted(theme)}>{snapshot.windows.length ? "The provider did not return limit values." : "The provider has not returned limit windows yet."}</Text> : null}
+    </View> : snapshot && snapshot.status !== "needs_auth" && !snapshot.error ? <Text style={muted(theme)}>{snapshot.windows.length ? "No limit values reported." : "No limit data yet."}</Text> : null}
     {snapshot?.error ? <Notice theme={theme} tone="danger">{snapshot.error}</Notice> : null}
     <View style={{ ...row, gap: 10 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -157,7 +158,7 @@ export function QuotaSummary({ theme, snapshot, now, compact, onRefresh, refresh
       </View>
       {onRefresh ? <InlineAction theme={theme} disabled={refreshing} onPress={onRefresh}>{refreshing ? "Refreshing…" : "Refresh"}</InlineAction> : null}
     </View>
-    {snapshot ? <Disclosure theme={theme} title={detailsTitle} open={open} onToggle={() => setOpen(!open)}>
+    {snapshot && (snapshot.windows.length > 0 || snapshot.fetchedAt || snapshot.nextRetryAt) ? <Disclosure theme={theme} title={detailsTitle} open={open} onToggle={() => setOpen(!open)}>
       <View style={{ gap: 4, paddingLeft: 18 }}>
         {snapshot.windows.map((quota) => <DetailLine key={quota.id} theme={theme}>
           {quota.label}: {quota.usedPercent === null ? "no data" : `${percent(quota.usedPercent)} used`}

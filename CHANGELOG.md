@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10.2 - 2026-11-07
+
+### Fixed
+
+- An inaccessible macOS Keychain no longer makes a Claude account look signed out when its fallback file contains only metadata and empty tokens. The plugin preserves the last known identity, explains how to restore credential access, and keeps switching blocked until the official CLI confirms sign-in again.
+- Checking a system CLI account no longer asks you to finish a browser sign-in that the plugin never started. Accounts distinguishes an unavailable sign-in check from a missing sign-in and gives the appropriate recovery steps.
+- Account removal now explains all blockers before confirmation, including an account selected as the default, an active sign-in, and current or pending agent selections.
+
+### Changed
+
+- Accounts uses Paseo's settings cards, switches, adaptive selects, and modal dialogs. **Manage** replaces the expanding action menu, and each added account has a visible **Remove** button.
+- Shorter account labels and status text, with fewer duplicate authentication messages and no empty limit details.
+
 ## 0.10.1 - 2026-11-04
 
 ### Changed
