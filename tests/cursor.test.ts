@@ -125,7 +125,13 @@ it("refuses a managed Cursor profile whose credentials are redirected elsewhere"
   await mkdir(elsewhere);await writeFile(join(elsewhere,"auth.json"),JSON.stringify({email:"other@example.test",id:9}));
   await rm(join(f.first.home,"cursor"),{recursive:true});await symlink(elsewhere,join(f.first.home,"cursor"));
   await rm(join(f.second.home,"cursor","auth.json"));await symlink(join(elsewhere,"auth.json"),join(f.second.home,"cursor","auth.json"));
+  await writeLaunchers(f.store);
   for(const account of [f.first,f.second]) {
+    let started=false;const sessions=new LoginSessions({finish:async()=>true,createProcess:()=>{started=true;throw new Error("sign-in started");}});closers.push(()=>sessions.close());
+    await expect(sessions.start(account,registry,f.root,`login-${account.id}`)).rejects.toThrow();expect(started).toBe(false);
+    await f.store.prepare(`chat-${account.id}`,"cursor",account.id);await f.store.change(r=>{Object.assign(r.bindings.find(b=>b.agentId===`chat-${account.id}`)!,{launchAccountId:account.id,launchToken:"token"});});
+    expect(await run(launcherPath(f.root,"cursor"),[],{...process.env,PASEO_AGENT_ID:`chat-${account.id}`})).toMatchObject({code:1,stderr:expect.stringContaining("Account profile preparation failed")});
+    await expect(readFile(join(f.root,"receipts",`chat-${account.id}.json`))).rejects.toMatchObject({code:"ENOENT"});
     expect(await probeAccount(account,registry)).toMatchObject({email:null,authStatus:"error"});
     await expect(readCursorCredentials({id:account.id,provider:"cursor",source:"managed",home:account.home,env:{},command:[],identityKey:null,generation:0})).rejects.toThrow("outside the account profile");
   }
