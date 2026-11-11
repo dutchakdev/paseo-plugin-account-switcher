@@ -152,7 +152,9 @@ export default function contribute(server:PluginServerContext){
   }
   // Paseo resolves an agent's login, and so its usage, from this session's environment. The launcher applies the profile to the CLI itself; this only lets Paseo see the same one.
   // The registry is read after any binding above, so a new agent already has its profile. A failed read costs only that hint.
-  const profile=await controller.store.read().then(state=>profileEnv(state,request.agentId,request.provider),error=>{console.error(`Could not name the account profile for agent ${request.agentId}: ${error instanceof Error?error.message:String(error)}`);return{};});
+  const profile:Record<string,string>=await controller.store.read().then(state=>profileEnv(state,request.agentId,request.provider),error=>{console.error(`Could not name the account profile for agent ${request.agentId}: ${error instanceof Error?error.message:String(error)}`);return{};});
+  // Paseo needs a profile hint for usage; restore the agent's own environment before starting Cursor.
+  if(request.provider==="cursor"&&Object.keys(profile).length)profile.PASEO_CURSOR_ORIGINAL_ENV=JSON.stringify({XDG_CONFIG_HOME:env.XDG_CONFIG_HOME,AGENT_CLI_CREDENTIAL_STORE:env.AGENT_CLI_CREDENTIAL_STORE});
   // The model hint must not reach the provider CLI.
   return {...request,env:{...env,...profile}};
  });

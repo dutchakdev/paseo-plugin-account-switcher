@@ -24,7 +24,7 @@
     "quotas",
     "usage-limits"
   ],
-  "description": "Use several Claude and ChatGPT/Codex subscription accounts in Paseo: choose one per agent, switch a chat to another account, and see every account's limits",
+  "description": "Use several Claude, ChatGPT/Codex and Cursor subscription accounts in Paseo: choose one per agent, switch a chat to another account, and see every account's limits",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config tests/vitest.config.ts",

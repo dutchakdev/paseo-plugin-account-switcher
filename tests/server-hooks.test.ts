@@ -148,6 +148,13 @@ describe("the profile a session's environment names", () => {
     const opened = await before.get("agent.session_open")!({ request: opening({ CODEX_HOME: "/home/me/.codex" }, "resume") }, { paseo: {} });
     expect(opened.env).toEqual({ CODEX_HOME: "/profiles/work" });
   });
+  it("keeps Cursor's original environment alongside the profile hint for usage", async () => {
+    controller.registry.accounts.push({ ...controller.registry.accounts[1], id:"cursor-work",provider:"cursor",home:"/profiles/cursor" });
+    controller.registry.bindings = [{ agentId:"agent-1",provider:"cursor",currentAccountId:"cursor-work",launchAccountId:"cursor-work" }];
+    controller.registry.integration.providers.push("cursor");
+    const opened = await start().get("agent.session_open")!({ request:{ ...opening({ XDG_CONFIG_HOME:"/normal-config" },"resume"),provider:"cursor" } }, { paseo:{} });
+    expect(opened.env).toMatchObject({ XDG_CONFIG_HOME:"/profiles/cursor",PASEO_CURSOR_ORIGINAL_ENV:JSON.stringify({XDG_CONFIG_HOME:"/normal-config"}) });
+  });
   it("adds nothing for an agent on the system account, nor while integration is off", async () => {
     const before = start();
     controller.registry.bindings = [{ agentId: "agent-1", provider: "codex", currentAccountId: "system-codex", launchAccountId: "system-codex" }];

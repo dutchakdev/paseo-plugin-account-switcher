@@ -8,7 +8,7 @@ import { missingCli, type Provider } from "../shared/contracts";
 import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
 import { launcherPath, writeLaunchers } from "./integration";
-import { cursorMacMarker, verifyCursorMacCommand, waitCursorMacMarker } from "./cursor-macos";
+import { cursorMarker, verifyCursorCommand, waitCursorMarker } from "./cursor-runtime";
 import { readClaudeCredentials } from "./usage/claude";
 import { UsageError } from "./usage";
 
@@ -21,8 +21,10 @@ export function accountCommand(registry: Registry, provider: Provider): string[]
 
 export function accountEnvironment(account: StoredAccount, registry: Registry, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   if (account.provider === "cursor") {
-    const env = {...base,...registry.sourceEnvironment.cursor};
-    return account.source === "system" && process.platform === "darwin" ? env : buildAccountEnv("cursor",account.home,env);
+    const env: NodeJS.ProcessEnv = {...base,...registry.sourceEnvironment.cursor};
+    if (process.platform !== "darwin") { delete env.CURSOR_API_KEY; delete env.CURSOR_AUTH_TOKEN; }
+    if (account.source === "system") return env;
+    return buildAccountEnv("cursor",account.home,env);
   }
   if (account.source === "managed") return buildAccountEnv(account.provider, account.home, base);
   const env = { ...base };
@@ -75,7 +77,7 @@ async function status(command: string[], args: string[], env: NodeJS.ProcessEnv,
   return new Promise(resolve => {
     const child = execFile(command[0], [...command.slice(1), ...args], { env, timeout: 20_000, maxBuffer: 256 * 1024, encoding: "utf8", windowsHide: true }, async (error, stdout, stderr) => {
       if (marker) {
-        try { if (!child.pid) throw new Error(); await waitCursorMacMarker(marker,child.pid); }
+        try { if (!child.pid) throw new Error(); await waitCursorMarker(marker,child.pid); }
         catch { return resolve({code:null,stdout:"",stderr:"",failed:true}); }
       }
       const code = error ? typeof error.code === "number" ? error.code : null : 0;
@@ -99,10 +101,10 @@ export async function probeAccount(account: StoredAccount, registry: Registry): 
       await prepareProfile({ provider: account.provider, home: account.home, sourceHome: registry.sourceHomes[account.provider], sourceEnvironment: registry.sourceEnvironment[account.provider] });
     }
     const env = accountEnvironment(account, registry);
-    let marker: Awaited<ReturnType<typeof cursorMacMarker>> | undefined;
-    if (account.provider === "cursor" && account.source === "managed" && process.platform === "darwin") {
-      await verifyCursorMacCommand(accountCommand(registry,"cursor"), env);
-      marker = await cursorMacMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
+    let marker: Awaited<ReturnType<typeof cursorMarker>> | undefined;
+    if (account.provider === "cursor" && account.source === "managed") {
+      await verifyCursorCommand(accountCommand(registry,"cursor"), env);
+      marker = await cursorMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
     }
     let result: Awaited<ReturnType<typeof status>>;
     try { result = await status(accountCommand(registry, account.provider), account.provider === "claude" ? ["auth", "status", "--json"] : account.provider === "cursor" ? ["status", "--format", "json"] : ["login", "status"], env, marker?.path); }

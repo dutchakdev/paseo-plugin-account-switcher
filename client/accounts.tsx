@@ -107,6 +107,8 @@ export function AccountsSurface(props: AccountsProps) {
     {state ? (["claude", "codex", "cursor"] as const).map((provider) => {
       const status = state.providers[provider];
       const group = state.accounts.filter((account) => account.provider === provider && listed(account, state));
+      // Cursor is optional: its group appears once Cursor is set up in Paseo or has accounts.
+      if (provider === "cursor" && !status.available && !state.accounts.some((account) => account.provider === "cursor")) return null;
       return <SettingsSection key={provider} title={providerName[provider]}>
         {!status.available ? <Notice theme={theme}>{missingCli(provider)}</Notice>
           : enabled && !status.integrated ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>

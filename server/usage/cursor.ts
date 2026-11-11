@@ -5,6 +5,7 @@ import { UsageError, type CollectedUsage, type QuotaAccount } from "./index";
 import { retryAfter, type ClaudeDependencies } from "./claude";
 import { credentialHash } from "./credential-hash";
 import { object, string } from "./parsers";
+import { cursorCredentialFile } from "../profiles";
 
 // Cursor's built-in Paseo usage source uses the same endpoint and fields.
 export async function readCursorCredentials(account: QuotaAccount, dependencies: ClaudeDependencies = {}, signal?: AbortSignal): Promise<{raw:string;source:string}> {
@@ -22,7 +23,7 @@ export async function readCursorCredentials(account: QuotaAccount, dependencies:
     if (!token) throw new UsageError("needs_auth", "missing_credentials");
     return {source:"keychain",raw:JSON.stringify({accessToken:token})};
   }
-  const path = macSystem ? join(account.home, ".cursor", "auth.json") : join(account.home, "cursor", "auth.json");
+  const path = macSystem ? join(account.home, ".cursor", "auth.json") : account.source === "managed" ? await cursorCredentialFile(account.home) : join(account.home, "cursor", "auth.json");
   return {source:"file",raw:await (dependencies.readFile ?? (path => readFile(path, "utf8")))(path)};
 }
 

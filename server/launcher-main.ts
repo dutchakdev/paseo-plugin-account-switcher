@@ -1,12 +1,10 @@
 import { spawn } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
-import { Readable } from "node:stream";
 import { readRegistry } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
 import { atomicWrite } from "./files";
-import { cursorMacMarker, verifyCursorMacCommand, waitCursorMacMarker } from "./cursor-macos";
+import { cursorMarker, verifyCursorCommand, waitCursorMarker } from "./cursor-runtime";
 
 class LauncherError extends Error {}
 let loginCompletion: { path: string; loginToken: string } | undefined;
@@ -50,35 +48,30 @@ async function main(): Promise<void> {
       if (!current.bindings.some(candidate => candidate.agentId === agentId)) throw new LauncherError("The account reservation was released while this agent started; launch refused.");
     }
   }
-  if (provider === "cursor") Object.assign(env,registry.sourceEnvironment.cursor);
-  if (account?.source === "managed" || provider === "cursor" && process.platform !== "darwin") env = buildAccountEnv(provider,account?.home ?? registry.sourceHomes[provider],env);
+  if (provider === "cursor") {
+    Object.assign(env,registry.sourceEnvironment.cursor);
+    if (process.platform !== "darwin") { delete env.CURSOR_API_KEY; delete env.CURSOR_AUTH_TOKEN; }
+    if (env.PASEO_CURSOR_ORIGINAL_ENV) {
+      const original = JSON.parse(env.PASEO_CURSOR_ORIGINAL_ENV) as Record<string, string | undefined>;
+      for (const key of ["XDG_CONFIG_HOME","AGENT_CLI_CREDENTIAL_STORE"] as const) {
+        const value = original[key] ?? registry.sourceEnvironment.cursor[key];
+        if (value === undefined) delete env[key]; else env[key] = value;
+      }
+    }
+    delete env.PASEO_CURSOR_ORIGINAL_ENV;
+  }
+  if (account?.source === "managed") env = buildAccountEnv(provider,account.home,env);
   if (login) args = provider === "cursor" ? ["login"] : provider === "claude" ? ["auth", "login", "--claudeai"] : args[2] === "--browser" ? ["login"] : ["login", "--device-auth"];
   const prefix = login && provider === "cursor" && command.at(-1) === "acp" ? command.slice(1,-1) : command.slice(1);
   const cursorAcp = provider === "cursor" && !login;
-  let marker: Awaited<ReturnType<typeof cursorMacMarker>> | undefined;
-  if (provider === "cursor" && account?.source === "managed" && process.platform === "darwin") {
-    try { await verifyCursorMacCommand(command.at(-1) === "acp" ? command.slice(0,-1) : command, env); }
+  let marker: Awaited<ReturnType<typeof cursorMarker>> | undefined;
+  if (provider === "cursor" && account?.source === "managed") {
+    try { await verifyCursorCommand(command.at(-1) === "acp" ? command.slice(0,-1) : command, env); }
     catch { throw new LauncherError("Cursor credential isolation could not be verified; launch refused."); }
-    marker = await cursorMacMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
+    marker = await cursorMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
   }
-  const child = spawn(command[0], [...prefix, ...args], { env, stdio: cursorAcp ? ["inherit", "pipe", "inherit"] : "inherit" });
-  if (cursorAcp && child.stdout) {
-    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    Readable.from((async function* () {
-      for await (let line of lines) {
-        try {
-          const message = JSON.parse(line);
-          // Prefer the config-option model picker: Cursor's legacy set_model drops
-          // the updated thinking options, leaving Paseo with the previous model's.
-          if (message.result?.models && message.result.configOptions?.some((option: { type?: string; category?: string }) => option.type === "select" && option.category === "model")) {
-            delete message.result.models;
-            line = JSON.stringify(message);
-          }
-        } catch { /* Forward other ACP lines unchanged. */ }
-        yield line + "\n";
-      }
-    })()).pipe(process.stdout);
-  }
+  const child = spawn(command[0], [...prefix, ...args], { env, stdio: cursorAcp && marker ? ["pipe", "inherit", "inherit"] : "inherit" });
+  child.stdin?.on("error", () => {});
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const forward = new Map<NodeJS.Signals, () => void>();
   for (const signal of signals) { const handler = () => { child.kill(signal); }; forward.set(signal, handler); process.on(signal, handler); }
@@ -88,7 +81,10 @@ async function main(): Promise<void> {
     child.once("spawn", () => {
       if (marker || !login && binding && account && agentId) {
         receipt = (async () => {
-          if (marker) await waitCursorMacMarker(marker.path, child.pid!);
+          if (marker) {
+            await waitCursorMarker(marker.path, child.pid!);
+            if (cursorAcp) process.stdin.pipe(child.stdin!);
+          }
           if (!login && binding && account && agentId) await atomicWrite(join(root, "receipts", `${encodeURIComponent(agentId)}.json`), JSON.stringify({ accountId: account.id, launchToken: binding.launchToken, pid: child.pid, at: new Date().toISOString() }));
         })();
         // A receipt failure cannot be treated as a successful identity switch.

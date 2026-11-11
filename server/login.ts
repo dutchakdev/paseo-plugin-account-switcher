@@ -4,7 +4,7 @@ import type { Provider, LoginSession } from "../shared/contracts";
 import type { Registry, StoredAccount } from "./store";
 import { accountCommand, accountEnvironment } from "./auth";
 import { assertManagedCommand, prepareProfile } from "./profiles";
-import { cursorMacMarker, verifyCursorMacCommand } from "./cursor-macos";
+import { cursorMarker, verifyCursorCommand } from "./cursor-runtime";
 import { createLoginProcess, type CreateLoginProcess, type LoginProcess } from "./login-process";
 
 type Entry = {
@@ -51,11 +51,11 @@ export class LoginSessions {
       buffer: "", nativeSuccess: false, stopped: false, pendingCompletions: [] };
     this.entries.set(account.id, entry);
     const env: NodeJS.ProcessEnv = { ...accountEnvironment(account, registry), BROWSER: "/usr/bin/true", NO_COLOR: "1", TERM: "dumb", NO_OPEN_BROWSER: "1" };
-    let marker: Awaited<ReturnType<typeof cursorMacMarker>> | undefined;
+    let marker: Awaited<ReturnType<typeof cursorMarker>> | undefined;
     try {
-      if (account.provider === "cursor" && process.platform === "darwin") {
-        await verifyCursorMacCommand(command, env);
-        marker = await cursorMacMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
+      if (account.provider === "cursor") {
+        await verifyCursorCommand(command, env);
+        marker = await cursorMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
       }
       entry.process = (this.dependencies.createProcess ?? createLoginProcess)({ command,
         args: account.provider === "claude" ? ["auth", "login", "--claudeai"] : account.provider === "cursor" ? ["login"] : ["app-server", "--stdio"], env, cwd,

@@ -98,6 +98,20 @@ Enterprise seats return every plan window as `null` and report an enabled
 "Monthly spend" window from `utilization`; when no plan window has a value, the
 empty plan windows are dropped.
 
+**Cursor:** managed accounts read `<profile>/cursor/auth.json`, refusing a credential
+folder or file that is a symbolic link; the system Linux
+account uses `$XDG_CONFIG_HOME/cursor/auth.json`, defaulting to
+`~/.config/cursor/auth.json`. The system macOS account follows its selected store:
+Keychain by default, `~/.cursor/auth.json` for `file`, and no credentials for
+`memory`. A missing Keychain token does not trigger a search in another store.
+The selected access token authorizes a POST to
+`https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`,
+the endpoint used by Paseo's Cursor collector. Reported Total, Cursor and Third
+Party percentages share the billing-cycle reset; when no percentages are present,
+reported plan balances supply the Plan usage reading. The response has no account
+identity, so the surrounding CLI probes and credential fingerprint establish
+ownership. This collector creates no model session and implements no token refresh.
+
 Tests use synthetic credentials and a synthetic stdio CLI. They establish local
 protocol, parsing, isolation, scheduling and cache behavior. They do not establish
 live access to a user's subscription or real multi-account acceptance.

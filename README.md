@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/dutchakdev/paseo-plugin-account-switcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dutchakdev/paseo-plugin-account-switcher/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/paseo-plugin-account-switcher)](https://www.npmjs.com/package/paseo-plugin-account-switcher)
 
-Use several Claude and ChatGPT/Codex subscription accounts in Paseo. Choose an account for each agent, switch the account of an existing chat, and see the limits of every saved account.
+Use several Claude, ChatGPT/Codex and Cursor subscription accounts in Paseo. Choose an account for each agent, switch accounts in an existing chat, and see each account's usage limits.
 
 Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/account-switcher) and on [paseo.cafe](https://paseo.cafe/plugins/account-switcher/).
 
@@ -14,26 +14,24 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 - **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. A chat changes account only through **Apply**, `/account name`, the switch button the chat offers when a limit runs out, or automatic switching in that case, if you turn it on.
 - **Keep your setup.** Profiles separate credentials while sharing provider settings, skills, and session history.
 - **Track account limits.** See used and remaining percentages, reset times, and freshness for every reported window.
-- **See them in Paseo's own usage.** Signed-in accounts appear in Paseo's Usage view, and an agent's usage popover shows the account that agent runs on.
-- **Carry on when a limit runs out.** When a turn stops because its account's limit is used up, the chat offers a switch to an account with room and continues there. Switching automatically is opt-in.
+- **See them in Paseo's own usage.** Signed-in Claude and Codex accounts also appear in Paseo's Usage view.
+- **Carry on when a limit runs out.** For Claude and Codex, when a turn stops because its account's limit is used up, the chat offers a switch to an account with room and continues there. Switching automatically is opt-in.
 - **Switch from the keyboard.** Type `/account work` in a chat, or pick **Make “Work” the Codex default** in the Command Center (⌘K).
 - **See it in the chat.** A line in the chat records applied switches, and why a new agent did not start on the default.
-- **Use a default.** Choose the account used by new agents for each provider. When the latest limits show it would fail, a new agent starts on another signed-in account instead.
+- **Use a default.** Choose the account used by new agents for each provider. For Claude and Codex, when the latest limits show it would fail, a new agent starts on another signed-in account instead.
 
 ## Requirements
 
 - **Paseo 0.11.0 or newer**, including beta releases after 0.11.0, on a **macOS or Linux** daemon and on the connected client.
 - **Node.js 22.12.0 or newer**, with npm.
-- The official **Paseo** CLI and at least one of **Claude Code** or **Codex** available to the daemon. A provider whose CLI is missing is skipped; after installing it, reload the plugin and select **Enable** in its section.
-- Claude or ChatGPT subscription authentication. API keys and custom authentication/provider overrides are unsupported.
+- The official **Paseo** CLI and at least one of **Claude Code**, **Codex** or **Cursor CLI** available to the daemon.
+- Subscription sign-in through the provider's official CLI. API keys and custom authentication or provider overrides are unsupported.
 
 The interface is in English. Reset dates use the viewing device's local time zone. See [installation](docs/installation.md) for remote hosts and [verification](docs/verification.md) for the scope of recorded testing.
 
-On macOS, managed Cursor accounts use the CLI's file credential store with a Node preload to select each profile; `HOME` and Cursor's session directory remain shared. This depends on Cursor's internal file APIs and has only been tested with simulated macOS behavior. Managed Cursor usage appears in Accounts; Paseo's own per-chat Cursor usage popover is unavailable for these accounts.
-
 ## Install
 
-Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude and Codex sign-ins to identify accounts and check their limits, and checking limits sends no model messages. The only message it sends to an agent is **Continue.**, after you switch from the row a used-up limit adds to the chat, or after an automatic switch that followed a failed turn. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
+Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude, Codex and Cursor sign-ins to identify accounts and check their limits, and checking limits sends no model messages. The only message it sends to an agent is **Continue.**, after you switch from the row a used-up limit adds to the chat, or after an automatic switch that followed a failed turn. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
 
 On Paseo 0.11.0 or a later release, install the reviewed version from the plugin directory:
 
@@ -59,8 +57,10 @@ To review or change the source first, install a [local checkout](docs/installati
 
 1. In Paseo, turn on **Settings → Plugins → Enable plugins**.
 2. Check that `paseo plugin ls account-switcher` shows **running**, then open **Accounts** in the sidebar or **Accounts and limits** in the Command Center. An app without Paseo's current screen API shows the same Accounts through the older surface API.
-3. Accounts lists the sign-ins your daemon already uses as **Current CLI · Claude** and **Current CLI · Codex**. A provider without its CLI has no Current CLI entry.
-4. Turn on **Account switching** in Accounts. This is separate from Paseo's plugin switch: the plugin saves your original Claude and Codex commands and points Paseo at its launchers. It leaves running chats alone, and turning it off restores the original commands.
+3. Accounts lists the sign-ins your daemon already uses as **Current CLI · Claude**, **Current CLI · Codex** and, once Cursor is set up in Paseo, **Current CLI · Cursor**. A provider without its CLI has no Current CLI entry.
+4. Turn on **Account switching** in Accounts. This is separate from Paseo's plugin switch: the plugin saves your original provider commands and points Paseo at its launchers. It leaves running chats alone, and turning it off restores the original commands.
+
+For Cursor, first add a custom ACP provider with ID `cursor` in Paseo, as described in [installation](docs/installation.md#before-installing). Reload Account Switcher, then select **Enable** in its Cursor section.
 
 ## Add an account
 
@@ -76,6 +76,7 @@ If clipboard access is unavailable, expand **Show sign-in link** and copy its se
 - **Claude:** finish on the provider's page. If it gives you an authorization code, paste the **complete code, including the part after `#`**, into **Authorization code** and select **Finish sign-in**.
 - **Codex, Device code:** enter the displayed code on the provider's page. Use it from a phone or another computer.
 - **Codex, In browser:** finish in a browser on the **daemon's computer**, because the callback uses localhost. From another device, cancel and choose **Device code**.
+- **Cursor:** finish signing in on Cursor's page. No authorization code needs to be pasted back into Paseo.
 
 After sign-in, the plugin verifies the account and refreshes its limits. To check again, open **Manage → Sign-in → Check**. An unverified account also has a visible **Check sign-in** button. Enter passwords only on the provider's official page.
 
@@ -96,7 +97,9 @@ A new Claude or Codex agent starts on its provider's default account. It starts 
 
 The replacement is the account with the largest percentage left in its tightest account-wide window; accounts without limit data come after the measured ones. Percentages do not compare the size of different plans. If every account is ruled out, the agent starts on the default, as before. Choosing an account for a chat yourself always takes precedence, and nothing changes when no default is set.
 
-To keep the default binding, for example when one provider holds both work and personal subscriptions, choose **Always use the default** under that provider in Accounts. New agents then start on the default or not at all, as in 0.6.0, and a tool that names another account is refused. **Start on another account** is the initial choice; the control appears once a provider has a default and more than one account.
+To keep the default binding for Claude or Codex, for example when one provider holds both work and personal subscriptions, choose **Always use the default** under that provider in Accounts. New agents then start on the default or not at all, as in 0.6.0, and a tool that names another account is refused. **Start on another account** is the initial choice; the control appears once a provider has a default and more than one account.
+
+A new Cursor agent always starts on Cursor's default account, and is not created when that account needs sign-in or cannot be confirmed; Cursor has no fallback to another account.
 
 Limits come from the plugin's last reading, so creating an agent does not wait for a provider's limits. It does run the official sign-in check for the default, and for each further account it tries.
 
@@ -104,13 +107,13 @@ Before signing in again, switch agents away from that profile. To remove a manag
 
 ### Start an agent on a chosen account
 
-A tool that creates agents can name the account a new Claude or Codex agent starts on: set `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment to the account's name, as shown in Accounts, or its ID. With the Paseo CLI:
+A tool that creates agents can name the account a new Claude, Codex or Cursor agent starts on: set `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment to the account's name, as shown in Accounts, or its ID. With the Paseo CLI:
 
 ```sh
 paseo run --provider codex --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work "Review the open pull requests"
 ```
 
-The named account is binding: the agent starts there or is not created, and the error says why. Limits do not move it to another account. A name must belong to exactly one account of the agent's provider; use the ID when two accounts share a name. Creation is refused when no such account exists, its sign-in is still in progress, the official sign-in check does not confirm it, **Always use the default** is on and the account is not the default, account switching is off for the provider, or the agent's provider is not Claude or Codex. The variable works only at creation: it reaches neither the provider CLI nor later sessions of the agent, and set in a provider's configured environment it selects nothing. The chat records the start when the account is not the default. Afterwards the agent behaves like any other: switching, and switching when a limit runs out, follow your settings.
+The named account is binding: the agent starts there or is not created, and the error says why. Limits do not move it to another account. A name must belong to exactly one account of the agent's provider; use the ID when two accounts share a name. Creation is refused when no such account exists, its sign-in is still in progress, the official sign-in check does not confirm it, **Always use the default** is on and the account is not the default, account switching is off for the provider, or the agent's provider is not Claude, Codex or Cursor. The variable works only at creation: it reaches neither the provider CLI nor later sessions of the agent, and set in a provider's configured environment it selects nothing. The chat records the start when the account is not the default. Afterwards the agent behaves like any other: switching, and switching when a limit runs out, follow your settings.
 
 ## Switch an existing chat
 
@@ -128,7 +131,7 @@ Type `/account` in the message field followed by an account name, or `default` f
 - While the agent is responding, or when the account's plan does not offer the agent's model, the account is selected and the switcher opens, where **Apply** and the warning are visible.
 - `/account` alone, or the account already in use, opens the switcher.
 
-The Command Center (⌘K) lists **Make “name” the Claude default** and **Make “name” the Codex default** for every signed-in account that is not already its provider's default.
+The Command Center (⌘K) lists **Make “name” the Claude default**, **Make “name” the Codex default** and **Make “name” the Cursor default** for every signed-in account that is not already its provider's default.
 
 ### In the chat
 
@@ -143,7 +146,7 @@ You can select an account during a response, but it is **never applied automatic
 
 Apply reloads the agent through Paseo while preserving its native session ID. The plugin confirms the new account only after startup confirmation and successful reload. If a switch fails once the reload has started, it attempts to restore the previous account. A switch refused before that, for example because the agent is responding or the account needs sign-in, changes nothing, and the selection stays for a later **Apply**. **Account not confirmed** means the running account could not be established; select an account and apply again.
 
-Plans differ in the models they offer. A free ChatGPT plan, for example, refuses a model that only paid plans have, and the agent's next message fails with `model_not_found`. For Codex, the plugin reads each account's models with its limits; when the selected account's plan does not offer the agent's model, the dialog says so before **Apply** and lists the models it does offer. Claude does not report its models this way, so the dialog shows no such warning for Claude.
+Plans differ in the models they offer. A free ChatGPT plan, for example, refuses a model that only paid plans have, and the agent's next message fails with `model_not_found`. For Codex, the plugin reads each account's models with its limits; when the selected account's plan does not offer the agent's model, the dialog says so before **Apply** and lists the models it does offer. Claude and Cursor do not report their models this way, so the dialog shows no such warning for them.
 
 Different agents can use different accounts in parallel. Avoid sending from another client during Apply: Paseo's native reload has no atomic lock against a concurrent message, which could be interrupted.
 
@@ -179,22 +182,26 @@ Monitoring sends no model messages. The official CLIs own authentication and tok
 
 ### In Paseo's usage
 
-The plugin also reports to Paseo's own Usage view, as the source **Account Switcher**. A daemon without usage sources skips this; Accounts shows the same limits.
+The plugin also reports Claude and Codex accounts to Paseo's own Usage view, as the source **Account Switcher**. A daemon without usage sources skips this; Accounts shows the same limits.
 
-- It lists each managed account that is signed in, with its plan and limit windows. It leaves out the **Current CLI** accounts, which Paseo's own cards already show, any account signed in as the same login as its provider's **Current CLI** account, and accounts that need sign-in or are in the middle of one.
+- It lists each managed Claude or Codex account that is signed in, with its plan and limit windows. It leaves out the **Current CLI** accounts, which Paseo's own cards already show, any account signed in as the same login as its provider's **Current CLI** account, and accounts that need sign-in or are in the middle of one.
 - It shows the plugin's last reading and sends no request to a provider when you open the view. A reading marked stale in Accounts shows its last values in Paseo's view without the mark. A limit the provider names without a percentage or an amount (Claude lists a few) is left out, as Paseo's own cards leave it out.
-- An agent bound to a managed account gets that account's profile directory in its session environment, so Paseo's usage popover for the agent reads the account the chat really runs on. The environment is set each time the agent's session opens (a new chat, a resume, or a switch), and only while account switching is on for the provider. Agents on **Current CLI** are unchanged and show the login Paseo uses by default.
+- An agent bound to a managed account gets that account's profile directory in its session environment, so Paseo's usage popover for the agent reads the account the chat really runs on. The environment is set each time the agent's session opens (a new chat, a resume, or a switch), and only while account switching is on for the provider. Agents on **Current CLI** are unchanged and show the login Paseo uses by default. On macOS, this popover is unavailable for managed Cursor accounts; their usage is shown in Accounts.
 - Known limitation: the Usage view can show one managed account twice. Once you open the usage details of an agent on a managed account, Paseo's own Claude or Codex source finds that login through the agent's session and can add its card, such as *Claude · you@example.com*, next to *Account Switcher · Work*. Both cards show the same account. Paseo keeps cards of different sources apart, so the plugin cannot merge them.
 
 ## Update or remove
 
 Plugin directory, npm, and Git installations update with `paseo plugin update account-switcher`, which shows the new revision and asks for approval.
 
+Before setting up Cursor, back up the account registry if you might downgrade: versions without Cursor support cannot read it afterwards. See [update](docs/installation.md#update).
+
 Before disabling or removing the plugin, turn off **Account switching** in Accounts to restore the original provider commands. Removal does not delete the separately stored account data. See [update and removal](docs/installation.md#update) for a local checkout, the full steps, and recovery.
 
 ## Scope
 
-This project supports same-provider switching with subscription accounts. Switching is manual, except for the opt-in automatic switch after a turn stopped on a used-up limit. A tool can name the account a new agent starts on; that choice is the tool's, and the plugin itself never rotates accounts. Rotating accounts to spread usage, API-key authentication, and Claude-to-Codex transfers are outside its scope. Provider authentication and limit formats can change with CLI versions; unsupported data is shown as unavailable.
+This project supports same-provider switching with subscription accounts. Switching is manual, except for the opt-in automatic switch for Claude and Codex after a turn stopped on a used-up limit. A tool can name the account a new agent starts on; that choice is the tool's, and the plugin itself never rotates accounts. Rotating accounts to spread usage, API-key authentication, and Claude-to-Codex transfers are outside its scope. Provider authentication and limit formats can change with CLI versions; unsupported data is shown as unavailable.
+
+Cursor support relies on internals of the Cursor CLI. After a Cursor CLI update, until Account Switcher supports it, managed Cursor chats and sign-ins may be refused, or Cursor's workspace features such as diagnostics and codebase context may stop working in them; in rare cases those features use another Cursor account. See [architecture](docs/architecture.md#accounts-and-profiles) for details.
 
 Automated tests cover the implementation with synthetic accounts and provider responses. They do not establish real A → B → A switching, compaction, child-session behavior, or rewind for your accounts. Recorded checks and remaining live verification are in [verification](docs/verification.md).
 

@@ -49,10 +49,6 @@ export class AccountStore {
    await mkdir(this.root, { recursive:true, mode:0o700 });
    try {
     await this.change(state => {
-     if (!state.accounts.some(account => account.id === "system-cursor")) {
-      state.sourceHomes.cursor = sourceHomes.cursor ?? join(homedir(),".config");
-      state.accounts.push({id:"system-cursor",provider:"cursor",label:"Current CLI · Cursor",source:"system",home:state.sourceHomes.cursor,email:null,plan:null,authStatus:"unknown",createdAt:new Date().toISOString(),identityKey:null,generation:0,loginToken:null});
-     }
      for (const account of state.accounts) {
       const providerName = account.provider === "claude" ? "Claude" : "Codex";
       // Translate only the original generated label; preserve all user labels.
@@ -63,9 +59,9 @@ export class AccountStore {
    } catch(error) { if(!isMissing(error)) throw new Error("The account registry is damaged; automatic recovery is disabled."); }
    const now = new Date().toISOString();
    await atomicWrite(join(this.root,"registry.json"),JSON.stringify({
-    version:1, sourceHomes, accounts: (["claude","codex","cursor"] as const).map(provider=>({
-     id:`system-${provider}`,provider,label:`Current CLI · ${provider === "claude"?"Claude":provider === "cursor"?"Cursor":"Codex"}`,
-     source:"system",home:sourceHomes[provider] ?? join(homedir(),".config"),email:null,plan:null,authStatus:"unknown",createdAt:now,identityKey:null,generation:0,
+    version:1, sourceHomes, accounts: (["claude","codex"] as const).map(provider=>({
+     id:`system-${provider}`,provider,label:`Current CLI · ${provider === "claude"?"Claude":"Codex"}`,
+     source:"system",home:sourceHomes[provider],email:null,plan:null,authStatus:"unknown",createdAt:now,identityKey:null,generation:0,
     })), bindings:[], defaults:{claude:null,codex:null}, commands:{claude:null,codex:null},originalCommands:{claude:null,codex:null},integration:{enabled:false,error:null},
    },null,2));
  }

@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, realpath, symlink, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { cursorMacEnvironment } from "./cursor-macos";
+import { cursorEnvironment } from "./cursor-runtime";
 import { homedir } from "node:os";
 import TOML from "@iarna/toml";
 import type { Provider } from "../shared/contracts";
@@ -67,9 +67,8 @@ export function buildAccountEnv(provider: Provider, home: string, base: NodeJS.P
   else {
     if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Cursor account switching is supported only on Linux and macOS.");
     delete env.CURSOR_API_KEY; delete env.CURSOR_AUTH_TOKEN;
-    delete env.PASEO_CURSOR_AUTH_FILE; delete env.PASEO_CURSOR_ORIGINAL_NODE_OPTIONS; delete env.PASEO_CURSOR_PRELOAD_MARKER;
-    if (process.platform === "darwin") Object.assign(env, cursorMacEnvironment(home, base));
-    else env.XDG_CONFIG_HOME = home;
+    delete env.PASEO_CURSOR_AUTH_FILE; delete env.PASEO_CURSOR_ORIGINAL_NODE_OPTIONS; delete env.PASEO_CURSOR_ORIGINAL_STORE; delete env.PASEO_CURSOR_PRELOAD_MARKER;
+    Object.assign(env, cursorEnvironment(home, base));
     env.CURSOR_CONFIG_DIR = base.CURSOR_CONFIG_DIR || join(homedir(),".cursor");
   }
   return env;
@@ -99,10 +98,20 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** A managed Cursor profile's credential file. A symlinked credential directory or file would select another login. */
+export async function cursorCredentialFile(home: string): Promise<string> {
+  const directory = join(home, "cursor"), file = join(directory, "auth.json");
+  if (!(await lstat(directory)).isDirectory()) throw new Error("The Cursor credential directory is outside the account profile.");
+  try { if (!(await lstat(file)).isFile()) throw new Error("The Cursor credential file is outside the account profile."); }
+  catch (error) { if (!isMissing(error)) throw error; }
+  return file;
+}
+
 export async function prepareProfile({ provider, home, sourceHome, sourceEnvironment=process.env }: { provider: Provider; home: string; sourceHome: string;sourceEnvironment?:NodeJS.ProcessEnv }): Promise<void> {
   if (provider === "cursor") {
     if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Cursor account switching is supported only on Linux and macOS.");
     await mkdir(join(home,"cursor"), { recursive: true, mode: 0o700 });
+    await cursorCredentialFile(home);
     return;
   }
   if (resolve(home) === resolve(sourceHome)) return;

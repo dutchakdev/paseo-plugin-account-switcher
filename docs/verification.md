@@ -397,10 +397,11 @@ Checked with an isolated Paseo **0.8.0** daemon, Claude Code **2.1.259**, and Co
 
 ## Remaining live acceptance
 
-- In a Paseo 0.11 or later app on a real daemon: an agent on a managed account
-  shows that account in Paseo's usage popover, and the Usage view lists the
-  managed accounts and none of the **Current CLI** accounts twice. After an
-  agent's usage details are opened, expect the known duplicate described under
+- In a Paseo 0.11 or later app on a real daemon: the usage popover shows the
+  selected account for Claude and Codex, and for Cursor on Linux. The plugin's
+  Usage source lists managed Claude and Codex accounts without duplicating
+  the **Current CLI** accounts. After an agent's usage details are opened,
+  expect the known duplicate described under
   Known limits. Paseo may also read `CLAUDE_CONFIG_DIR` for settings or session
   files; a managed home links those directories to the source home, so check
   that a chat on a managed account behaves as before.
@@ -418,7 +419,7 @@ Checked with an isolated Paseo **0.8.0** daemon, Claude Code **2.1.259**, and Co
   and A → B → A within the same chat.
 - Comparing every reported quota with the provider's own display, including
   inactive accounts.
-- Full OAuth completion for Claude and Codex through the new dialog.
+- Full OAuth completion for Claude, Codex and Cursor through the sign-in dialog.
 - Context preservation after real compaction, child sessions, and Claude rewind.
 - A physical phone or native mobile client. A compact browser viewport does not
   establish native-device behavior.

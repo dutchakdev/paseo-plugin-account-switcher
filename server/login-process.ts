@@ -68,8 +68,10 @@ if(!process.connected)stop(1);else process.send({type:'ready'});
 `;
 
 export const createLoginProcess: CreateLoginProcess = options => {
+  const supervisorEnv = options.env.PASEO_CURSOR_AUTH_FILE
+    ? { ...options.env, NODE_OPTIONS: options.env.PASEO_CURSOR_ORIGINAL_NODE_OPTIONS } : options.env;
   const child = spawn(process.execPath, ["-e", supervisor, options.receiptPath, options.loginToken], {
-    cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe", "ipc"], windowsHide: true,
+    cwd: options.cwd, env: supervisorEnv, stdio: ["pipe", "pipe", "pipe", "ipc"], windowsHide: true,
   });
   let receipt: { code: number; receiptWritten: boolean } | undefined;
   let exited = false;
