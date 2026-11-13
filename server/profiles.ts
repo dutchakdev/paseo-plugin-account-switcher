@@ -1,5 +1,6 @@
 import { lstat, mkdir, readFile, realpath, symlink, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { cursorEnvironment } from "./cursor-runtime";
 import { homedir } from "node:os";
 import TOML from "@iarna/toml";
 import type { Provider } from "../shared/contracts";
@@ -10,6 +11,11 @@ AUTH_ENV.push("CLAUDE_CODE_OAUTH_REFRESH_TOKEN","CLAUDE_CODE_OAUTH_SCOPES","CLAU
 AUTH_ENV.push("CLAUDE_BG_AUTH_SNAPSHOT_PATH","GATEWAY_TOKEN_FILE_DESCRIPTOR","WEBSOCKET_AUTH_FILE_DESCRIPTOR","SESSION_INGRESS_TOKEN_FILE","ANTHROPIC_UNIX_SOCKET","CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST","CLAUDE_CODE_HOST_AUTH_ENV_VAR");
 
 export function assertSubscriptionEnvironment(provider: Provider, environment: Record<string, unknown>): void {
+  if (provider === "cursor") {
+    if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Cursor account switching is supported only on Linux and macOS.");
+    if (environment.CURSOR_API_KEY || environment.CURSOR_AUTH_TOKEN) throw new Error("Cursor API key overrides are incompatible with isolated accounts.");
+    return;
+  }
   const conflicting = AUTH_ENV.some(key => {
     // Claude's supported credential namespace is handled separately by discovery.
     if (key === "CLAUDE_SECURESTORAGE_CONFIG_DIR") return false;
@@ -34,9 +40,12 @@ function assertCodexSettings(config: Record<string, unknown>) {
 }
 
 export async function assertManagedCommand(provider:Provider,args:string[]):Promise<void> {
+  if (provider === "cursor" && process.platform !== "linux" && process.platform !== "darwin") throw new Error("Cursor account switching is supported only on Linux and macOS.");
   for(let i=0;i<args.length;i++) {
     const arg=args[i];
-    if(provider==="codex") {
+    if(provider==="cursor") {
+      if (/^(XDG_CONFIG_HOME|CURSOR_CONFIG_DIR|CURSOR_API_KEY|CURSOR_AUTH_TOKEN|AGENT_CLI_CREDENTIAL_STORE|NODE_OPTIONS)=/.test(arg) || arg === "--api-key" || arg.startsWith("--api-key=") || arg === "--auth-token" || arg.startsWith("--auth-token=")) throw new Error("CLI arguments override account isolation.");
+    } else if(provider==="codex") {
       const value=arg==="-c"||arg==="--config"?args[++i]:arg.startsWith("--config=")?arg.slice(9):arg.startsWith("-c")&&arg.length>2?arg.slice(2):null;
       if(value && AUTH_CONFIG_KEYS.test(value.split("=")[0].trim().replaceAll('"',''))) throw new Error("CLI arguments override account isolation.");
       if(arg==="--oss"||arg==="--local-provider"||arg.startsWith("--local-provider=")) throw new Error("This profile only supports a ChatGPT subscription.");
@@ -54,7 +63,14 @@ export function buildAccountEnv(provider: Provider, home: string, base: NodeJS.P
   for (const key of AUTH_ENV) delete env[key];
   for (const key of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_AGENT_SDK_VERSION"]) delete env[key];
   if (provider === "claude") env.CLAUDE_CONFIG_DIR = home;
-  else env.CODEX_HOME = home;
+  else if (provider === "codex") env.CODEX_HOME = home;
+  else {
+    if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Cursor account switching is supported only on Linux and macOS.");
+    delete env.CURSOR_API_KEY; delete env.CURSOR_AUTH_TOKEN;
+    delete env.PASEO_CURSOR_AUTH_FILE; delete env.PASEO_CURSOR_ORIGINAL_NODE_OPTIONS; delete env.PASEO_CURSOR_ORIGINAL_STORE; delete env.PASEO_CURSOR_PRELOAD_MARKER;
+    Object.assign(env, cursorEnvironment(home, base));
+    env.CURSOR_CONFIG_DIR = base.CURSOR_CONFIG_DIR || join(homedir(),".cursor");
+  }
   return env;
 }
 
@@ -82,7 +98,22 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** A managed Cursor profile's credential file. A symlinked credential directory or file would select another login. */
+export async function cursorCredentialFile(home: string): Promise<string> {
+  const directory = join(home, "cursor"), file = join(directory, "auth.json");
+  if (!(await lstat(directory)).isDirectory()) throw new Error("The Cursor credential directory is outside the account profile.");
+  try { if (!(await lstat(file)).isFile()) throw new Error("The Cursor credential file is outside the account profile."); }
+  catch (error) { if (!isMissing(error)) throw error; }
+  return file;
+}
+
 export async function prepareProfile({ provider, home, sourceHome, sourceEnvironment=process.env }: { provider: Provider; home: string; sourceHome: string;sourceEnvironment?:NodeJS.ProcessEnv }): Promise<void> {
+  if (provider === "cursor") {
+    if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Cursor account switching is supported only on Linux and macOS.");
+    await mkdir(join(home,"cursor"), { recursive: true, mode: 0o700 });
+    await cursorCredentialFile(home);
+    return;
+  }
   if (resolve(home) === resolve(sourceHome)) return;
   await mkdir(home, { recursive: true, mode: 0o700 });
   if (provider === "codex") {

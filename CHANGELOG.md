@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Cursor account switching on Linux and macOS, with browser sign-in, defaults for new chats, switching an idle chat without losing its session, and per-account usage in Accounts and the chat switcher. Cursor appears in Accounts once it is set up in Paseo; disabling or removing it in Paseo leaves Claude and Codex switching on.
+
+### Changed
+
+- Once Cursor is set up, versions without Cursor support cannot read the account registry. Back up `registry.json` before setting up Cursor; downgrading requires restoring that backup, which also rolls back settings and chat assignments made since.
+
 ## 0.10.2 - 2026-11-07
 
 ### Fixed

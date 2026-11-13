@@ -16,6 +16,8 @@ describe("account recovery guidance", () => {
     expect(signInFeedback({ ...account, source: "system", authStatus: "needs_auth" }).text).toContain("claude auth login");
     expect(signInFeedback({ ...account, provider: "codex", source: "system", authStatus: "needs_auth" }).text).toContain("codex login");
     expect(signInFeedback({ ...account, provider: "codex", authStatus: "error" }).text).not.toContain("Claude");
+    expect(signInFeedback({ ...account, provider: "cursor", source: "system", authStatus: "needs_auth" }).text).toContain("cursor-agent login");
+    expect(signInFeedback({ ...account, provider: "cursor", authStatus: "error" }).text).toContain("Cursor credentials");
   });
 });
 

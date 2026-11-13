@@ -8,9 +8,11 @@ Account Switcher runs on the machine hosting your Paseo daemon. Its UI appears i
 
 Use a macOS or Linux daemon, Paseo **0.11.0 or newer** on both daemon and client, and Node.js **22.12.0 or newer**. Beta releases are included: Paseo also checks a prerelease against its stable core version, so a beta of any release after 0.11.0 satisfies the manifest's `>=0.11.0` range. The exception is the 0.11.0 betas: they predate the manifest `icon` field and refuse the manifest. Paseo 0.8 to 0.10 refuse it too; they can stay on 0.5.0, the last release for them (see [Git installations](#git-installations)). See [Paseo's compatibility rules](https://paseo.sh/docs/plugins/reference#requirements).
 
-Install the official `paseo` CLI and at least one of `claude` or `codex` for the daemon's operating-system user. Applying an account reloads the agent with the CLI Paseo names in `PASEO_CLI`, which the desktop app sets to its bundled CLI, or, when that is unset or cannot start, with `paseo` from the daemon's PATH. Each provider CLI you want to use must be discoverable through the daemon's PATH or its configured Paseo provider command. A provider whose CLI is missing gets no launcher: Accounts says so and hides its **Current CLI** account. After installing it, reload the plugin, then select **Enable** in that provider's section if switching is already on for the other.
+Install the official `paseo` CLI and at least one of `claude`, `codex` or `cursor-agent` for the daemon's operating-system user. Applying an account reloads the agent with the CLI Paseo names in `PASEO_CLI`, which the desktop app sets to its bundled CLI, or, when that is unset or cannot start, with `paseo` from the daemon's PATH. Each provider CLI you want to use must be discoverable through the daemon's PATH or its configured Paseo provider command. A provider whose CLI is missing is not added to integration: Accounts says so and hides its **Current CLI** account. After installing it, reload the plugin, then select **Enable** in that provider's section if switching is already on for another provider.
 
 Existing CLI subscription sign-ins appear as **Current CLI** accounts. You can add isolated accounts through Paseo after installation. API keys, alternate API providers, and conflicting authentication or endpoint overrides are unsupported; the plugin reports them instead of assuming which account they represent.
+
+For Cursor, add it in Paseo's provider settings first, or configure `agents.providers.cursor` with `extends: "acp"`, `label: "Cursor"` and `command: ["cursor-agent", "acp"]`. The provider ID must be exactly `cursor` for Paseo's native Cursor adapter. Reload Account Switcher and enable its Cursor section. Managed accounts use browser sign-in.
 
 Enable **Settings → Plugins → Enable plugins** on the target host. Paseo plugins are trusted, unsandboxed code. Installing this plugin and its dependencies grants them the daemon user's access, including files, processes, credentials, and network services.
 
@@ -58,7 +60,7 @@ paseo plugin ls account-switcher --host 127.0.0.1:6767
 
 `npm run check` builds the native-provider launcher, then typechecks and tests; the build must come first on a fresh checkout. Paseo compiles the plugin's client and server entries when loading it.
 
-Require **running** in the plugin list, then open **Accounts** on that host. Select **Enable** in Accounts to activate switching. This is separate from the daemon-wide plugin switch: it saves the original Claude and Codex commands and replaces them with account-aware launchers. It does not restart existing chats.
+Require **running** in the plugin list, then open **Accounts** on that host. Select **Enable** in Accounts to activate switching. This is separate from the daemon-wide plugin switch: it saves the original provider commands and replaces them with account-aware launchers. It does not restart existing chats.
 
 Keep one Account Switcher installation per daemon data directory. The registry and launchers use a fixed `account-switcher` directory; installing the same source under another runtime ID does not create an independent account store.
 
@@ -76,7 +78,7 @@ paseo plugin ls account-switcher --host ssh://user@host
 
 Use the same `--host` value for subsequent management commands. If Accounts is available on several connected hosts, use its host picker to choose the intended daemon. Accounts, defaults, sign-ins, and limits belong to that host.
 
-For remote sign-in, use **Device code** for Codex. Codex's **In browser** mode needs a browser on the daemon computer because its callback uses localhost. Claude's manual authorization-code flow can be completed from another device.
+For remote sign-in, use **Device code** for Codex. Codex's **In browser** mode needs a browser on the daemon computer because its callback uses localhost. Claude's manual authorization-code flow and Cursor's browser sign-in can be completed from another device.
 
 ## Update
 
@@ -99,6 +101,8 @@ paseo plugin ls account-switcher --host 127.0.0.1:6767
 ```
 
 Use your installation's host throughout. A daemon restart is unnecessary. A failed source reload needs a source fix and another reload; inspect the plugin status and logs instead of assuming the old bundle remains active.
+
+Before setting up Cursor, back up the [account registry](architecture.md#stored-data). A downgrade to a version without Cursor support requires a registry from before Cursor was recorded. Restore the original commands by turning off **Account switching** in Accounts, disable the plugin, then restore that backup before loading the older version. This also restores settings and chat assignments from the backup; it does not delete separate credential files.
 
 ## Disable or remove
 
@@ -132,8 +136,8 @@ paseo plugin enable account-switcher --host 127.0.0.1:6767
 | Symptom | What to check |
 | --- | --- |
 | Accounts is missing | Confirm the selected host, Paseo 0.11.0 or newer (including beta releases after 0.11.0) on the app and daemon, the global plugin switch, and `running` status. |
-| Provider CLI not found | Neither CLI was found. Check the installations and the daemon user's PATH or configured provider commands. A terminal shell's PATH can differ from a background daemon's. |
-| A provider says its CLI was not found | That provider is skipped; the other keeps working. Install its CLI or configure its command, reload the plugin, then select **Enable** in its section. |
+| Provider CLI not found | No supported CLI was found. Check the installations and the daemon user's PATH or configured provider commands. Cursor also needs an enabled `cursor` provider in Paseo. A terminal shell's PATH can differ from a background daemon's. |
+| A provider says its CLI was not found | That provider is skipped; the others keep working. Install its CLI or configure its command, reload the plugin, then select **Enable** in its section. |
 | Authentication override error | Check provider settings, CLI arguments, and the daemon environment for API keys, custom endpoints, or alternate providers. Use subscription authentication for this plugin. Do not paste secret values into a report. |
 | Provider commands changed | Something else replaced a launcher. Review that configuration change, then explicitly select **Enable** again if you want Account Switcher to own provider launches. |
 | Sign-in link does not open | In the desktop app, use **Copy link** and your usual browser. Elsewhere, use **Open browser** or **Copy link**. **Show sign-in link** provides selectable text when clipboard access fails. |
@@ -146,6 +150,7 @@ paseo plugin enable account-switcher --host 127.0.0.1:6767
 | Account not confirmed | Select the intended account and apply it again while idle. Check the native agent status if reload still fails. |
 | Limits are stale or unavailable | Read the account error, freshness, and retry time. **Refresh** respects backoff; expired authentication needs sign-in. Unreported values are not inferred. |
 | Remove or sign-in is blocked | Select the account’s visible **Remove** button to see the blockers. Clear its default and pending selections, and switch all bound agents away. Archived agents also retain bindings. An agent that failed to start holds its account for at least 10 minutes. |
+| Cursor isolation could not be verified | After a Cursor CLI update, the plugin could not confirm that Cursor uses the account's own credentials, so it refused the launch, sign-in check, or sign-in. Update Account Switcher; until then use **Current CLI · Cursor**. |
 | Claude says sign-in is unavailable | Read the credential-access error. An inaccessible macOS Keychain is different from signing out; restore access before using **Check sign-in**. See below for background daemons. |
 
 For loading failures:

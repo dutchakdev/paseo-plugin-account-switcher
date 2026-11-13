@@ -50,7 +50,7 @@ export default function contribute(server:PluginServerContext){
   const binding=await controller.switcher(paseo).apply(agentId,accountId);
   if(binding.currentAccountId){
    const to=binding.currentAccountId;
-   void controller.usage.refresh(to).catch(()=>{});
+   if(binding.provider!=="cursor")void controller.usage.refresh(to).catch(()=>{});
    const switched=await note(agentId,async()=>{
     const state=await controller.store.read();
     const fromId=before?await controller.accountOf(paseo,agentId,binding.provider,before):null;
@@ -140,8 +140,8 @@ export default function contribute(server:PluginServerContext){
   // Neither hint from the creation reaches the CLI, on this or any later session of the agent.
   const {[MODEL_ENV]:model,[ACCOUNT_ENV]:account,...env}=request.env;
   const creating=request.purpose==="interactive"&&request.reason==="create",requested=account?.trim()||null;
-  if(creating&&requested&&request.provider!=="claude"&&request.provider!=="codex")throw new SwitchRefusal(`Account Switcher manages only Claude Code and Codex accounts, so the ${request.provider} agent cannot start on ${requested}.`);
-  if(creating&&(request.provider==="claude"||request.provider==="codex")){await controller.ensureRuntime(paseo);const bound=await controller.switcher(paseo).bindNewAgent(request.agentId,request.provider,model||null,requested);
+  if(creating&&requested&&request.provider!=="claude"&&request.provider!=="codex"&&request.provider!=="cursor")throw new SwitchRefusal(`Account Switcher manages only Claude Code, Codex and Cursor accounts, so the ${request.provider} agent cannot start on ${requested}.`);
+  if(creating&&(request.provider==="claude"||request.provider==="codex"||request.provider==="cursor")){await controller.ensureRuntime(paseo);const bound=await controller.switcher(paseo).bindNewAgent(request.agentId,request.provider,model||null,requested);
    const reason=bound?.reason;
    if(bound&&reason){
     const started=await note(request.agentId,async()=>{const state=await controller.store.read(),to=labelOf(state,bound.accountId);return to?{kind:"started",from:labelOf(state,bound.defaultId),to,reason}:null;});
@@ -152,7 +152,9 @@ export default function contribute(server:PluginServerContext){
   }
   // Paseo resolves an agent's login, and so its usage, from this session's environment. The launcher applies the profile to the CLI itself; this only lets Paseo see the same one.
   // The registry is read after any binding above, so a new agent already has its profile. A failed read costs only that hint.
-  const profile=await controller.store.read().then(state=>profileEnv(state,request.agentId,request.provider),error=>{console.error(`Could not name the account profile for agent ${request.agentId}: ${error instanceof Error?error.message:String(error)}`);return{};});
+  const profile:Record<string,string>=await controller.store.read().then(state=>profileEnv(state,request.agentId,request.provider),error=>{console.error(`Could not name the account profile for agent ${request.agentId}: ${error instanceof Error?error.message:String(error)}`);return{};});
+  // Paseo needs a profile hint for usage; restore the agent's own environment before starting Cursor.
+  if(request.provider==="cursor"&&Object.keys(profile).length)profile.PASEO_CURSOR_ORIGINAL_ENV=JSON.stringify({XDG_CONFIG_HOME:env.XDG_CONFIG_HOME,AGENT_CLI_CREDENTIAL_STORE:env.AGENT_CLI_CREDENTIAL_STORE});
   // The model hint must not reach the provider CLI.
   return {...request,env:{...env,...profile}};
  });

@@ -42,7 +42,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
     : !state.providers[provider].available ? missingCli(provider)
     : state.integration.enabled ? `Account switching is off for ${cliName[provider]}. Enable it in Accounts.`
     : "Account switching is disabled in Accounts.";
-  const idle = !live.error && idleForSwitch(live.data) && selected?.status === "idle" && selected.attentionReason !== "permission";
+  const idle = !live.error && idleForSwitch(live.data) && ["idle", "error", "closed"].includes(selected?.status ?? "") && selected?.attentionReason !== "permission";
   const switching = binding?.status === "switching";
   const disabled = action.isPending || switching || !enabled;
   const candidates = state?.accounts.filter((account) => account.provider === provider) ?? [];
@@ -63,7 +63,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
     {accounts.error ? <Notice theme={theme} tone="danger">{errorMessage(accounts.error)}</Notice> : null}
     {usage.error ? <Notice theme={theme} tone="danger">{errorMessage(usage.error)}</Notice> : null}
     {live.error ? <Notice theme={theme} tone="danger">Agent status unconfirmed: {errorMessage(live.error)}</Notice> : null}
-    {!provider && !live.isPending ? <Notice theme={theme}>Account switching is available for Claude and Codex only.</Notice> : null}
+    {!provider && !live.isPending ? <Notice theme={theme}>Account switching is available for Claude, Codex, and Cursor.</Notice> : null}
     {off ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
       <View style={{ flex: 1, minWidth: 0 }}><Notice theme={theme} tone="warning">{off}</Notice></View>
       <InlineAction theme={theme} onPress={leave}>Open</InlineAction>

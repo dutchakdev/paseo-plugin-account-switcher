@@ -4,9 +4,10 @@ import { dirname } from "node:path";
 import { UsageSnapshotSchema, type Provider, type UsageSnapshot, type UsageWindow } from "../../shared/contracts";
 import { collectClaudeUsage } from "./claude";
 import { collectCodexUsage } from "./codex";
+import { collectCursorUsage } from "./cursor";
 import { object } from "./parsers";
 
-export type QuotaAccount = { id: string; provider: Provider; home: string; command: string[]; env: NodeJS.ProcessEnv; identityKey: string | null; generation: number; credentialVersion?: string; identityCredentialVersion?: string; requireIdentityVerification?: boolean };
+export type QuotaAccount = { id: string; provider: Provider; source?: "system" | "managed"; home: string; command: string[]; env: NodeJS.ProcessEnv; identityKey: string | null; generation: number; credentialVersion?: string; identityCredentialVersion?: string; requireIdentityVerification?: boolean };
 export { readCredentialVersion } from "./credentials";
 export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[]; models?: string[] | null; usageAllowed?: boolean | null };
 export type FetchUsage = (account: QuotaAccount, signal?: AbortSignal) => Promise<CollectedUsage>;
@@ -19,8 +20,8 @@ export async function usageChecksEnabled(configPath: string): Promise<boolean> {
 }
 export class UsageError extends Error {
   constructor(public readonly status: "needs_auth" | "unavailable", public readonly code: string, public readonly retryAfterMs?: number) {
-    super(code === "keychain_unavailable" ? "Cannot access macOS Keychain. Unlock it and allow Claude Code to read its credentials, then check sign-in again."
-      : code === "credential_read_failed" ? "Cannot read saved credentials. Check profile permissions and, on macOS, unlock Keychain and allow Claude Code access."
+    super(code === "keychain_unavailable" ? "Cannot access macOS Keychain. Unlock it and allow access to this account's saved sign-in, then check sign-in again."
+      : code === "credential_read_failed" ? "Cannot read saved credentials. Check profile permissions and, on macOS, unlock Keychain and allow access."
       : status === "needs_auth" ? "Sign in again to retrieve limits." : "The limits service is temporarily unavailable.");
   }
 }
@@ -35,7 +36,7 @@ function fingerprint(account: QuotaAccount, includeCredentials=true): string {
   return createHash("sha256").update(JSON.stringify([account.provider, account.home, account.identityKey, account.generation, account.command, includeCredentials?account.credentialVersion:undefined])).digest("hex");
 }
 const identityProven = (account:QuotaAccount) => account.identityKey!==null&&!!account.credentialVersion?.startsWith("present:")&&account.credentialVersion===account.identityCredentialVersion;
-const fetchProvider: FetchUsage = (account, signal) => account.provider === "codex" ? collectCodexUsage(account, signal) : collectClaudeUsage(account, {}, signal);
+const fetchProvider: FetchUsage = (account, signal) => account.provider === "codex" ? collectCodexUsage(account, signal) : account.provider === "cursor" ? collectCursorUsage(account, signal) : collectClaudeUsage(account, {}, signal);
 
 export function createUsageService(options: UsageOptions) {
   const entries = new Map<string, Entry>();

@@ -68,6 +68,7 @@ Server and client code must not import `@getpaseo/client` or `@getpaseo/protocol
 | `index.client.tsx`, `client/` | Accounts, sign-in, limits UI, composer chip, and modal state |
 | `index.server.ts`, `server/controller.ts` | RPCs and coordination of account operations |
 | `server/profiles.ts`, `server/integration.ts` | Profile preparation and provider command ownership |
+| `server/cursor-runtime.ts` | Cursor credential/config redirection, worker routing, and launch markers |
 | `server/switching.ts`, `server/launcher-main.ts` | Prepared selection, native reload, startup confirmation, rollback |
 | `server/login.ts`, `server/login-process.ts` | Official CLI sign-in and process lifecycle |
 | `server/usage/` | Limits collectors, identity verification, cache, and scheduler |

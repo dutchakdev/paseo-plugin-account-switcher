@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { readRegistry } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
 import { atomicWrite } from "./files";
+import { cursorMarker, verifyCursorCommand, waitCursorMarker } from "./cursor-runtime";
 
 class LauncherError extends Error {}
 let loginCompletion: { path: string; loginToken: string } | undefined;
@@ -13,12 +14,12 @@ async function finishLogin(exitCode: number): Promise<void> {
 
 async function main(): Promise<void> {
   const executable = resolve(process.argv[1]), root = dirname(dirname(executable));
-  const provider = basename(executable) === "claude-launcher" ? "claude" : basename(executable) === "codex-launcher" ? "codex" : null;
+  const provider = basename(executable) === "claude-launcher" ? "claude" : basename(executable) === "codex-launcher" ? "codex" : basename(executable) === "cursor-launcher" ? "cursor" : null;
   if (!provider) throw new LauncherError("Unknown account launcher.");
   let registry;
   try { registry = await readRegistry(root); } catch { throw new LauncherError("Account registry is missing or corrupt; launch refused."); }
   const command = registry.commands[provider];
-  if (!command?.[0] || !isAbsolute(command[0]) || [join(root, "bin", "claude-launcher"), join(root, "bin", "codex-launcher")].includes(resolve(command[0]))) throw new LauncherError("Original provider command is unavailable; launch refused.");
+  if (!command?.[0] || !isAbsolute(command[0]) || [join(root, "bin", "claude-launcher"), join(root, "bin", "codex-launcher"), join(root, "bin", "cursor-launcher")].includes(resolve(command[0]))) throw new LauncherError("Original provider command is unavailable; launch refused.");
   let args = process.argv.slice(2), env = { ...process.env };
   const login = args[0] === "--account-switcher-login", agentId = env.PASEO_AGENT_ID;
   const binding = agentId ? registry.bindings.find(candidate => candidate.agentId === agentId && candidate.provider === provider) : undefined;
@@ -46,10 +47,31 @@ async function main(): Promise<void> {
       try { current = await readRegistry(root); } catch { throw new LauncherError("Account registry is missing or corrupt; launch refused."); }
       if (!current.bindings.some(candidate => candidate.agentId === agentId)) throw new LauncherError("The account reservation was released while this agent started; launch refused.");
     }
-    env = buildAccountEnv(provider, account.home, env);
   }
-  if (login) args = provider === "claude" ? ["auth", "login", "--claudeai"] : args[2] === "--browser" ? ["login"] : ["login", "--device-auth"];
-  const child = spawn(command[0], [...command.slice(1), ...args], { env, stdio: "inherit" });
+  if (provider === "cursor") {
+    Object.assign(env,registry.sourceEnvironment.cursor);
+    if (process.platform !== "darwin") { delete env.CURSOR_API_KEY; delete env.CURSOR_AUTH_TOKEN; }
+    if (env.PASEO_CURSOR_ORIGINAL_ENV) {
+      const original = JSON.parse(env.PASEO_CURSOR_ORIGINAL_ENV) as Record<string, string | undefined>;
+      for (const key of ["XDG_CONFIG_HOME","AGENT_CLI_CREDENTIAL_STORE"] as const) {
+        const value = original[key] ?? registry.sourceEnvironment.cursor[key];
+        if (value === undefined) delete env[key]; else env[key] = value;
+      }
+    }
+    delete env.PASEO_CURSOR_ORIGINAL_ENV;
+  }
+  if (account?.source === "managed") env = buildAccountEnv(provider,account.home,env);
+  if (login) args = provider === "cursor" ? ["login"] : provider === "claude" ? ["auth", "login", "--claudeai"] : args[2] === "--browser" ? ["login"] : ["login", "--device-auth"];
+  const prefix = login && provider === "cursor" && command.at(-1) === "acp" ? command.slice(1,-1) : command.slice(1);
+  const cursorAcp = provider === "cursor" && !login;
+  let marker: Awaited<ReturnType<typeof cursorMarker>> | undefined;
+  if (provider === "cursor" && account?.source === "managed") {
+    try { await verifyCursorCommand(command.at(-1) === "acp" ? command.slice(0,-1) : command, env); }
+    catch { throw new LauncherError("Cursor credential isolation could not be verified; launch refused."); }
+    marker = await cursorMarker(); env.PASEO_CURSOR_PRELOAD_MARKER = marker.path;
+  }
+  const child = spawn(command[0], [...prefix, ...args], { env, stdio: cursorAcp && marker ? ["pipe", "inherit", "inherit"] : "inherit" });
+  child.stdin?.on("error", () => {});
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const forward = new Map<NodeJS.Signals, () => void>();
   for (const signal of signals) { const handler = () => { child.kill(signal); }; forward.set(signal, handler); process.on(signal, handler); }
@@ -57,16 +79,23 @@ async function main(): Promise<void> {
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit, reject) => {
     child.once("error", () => reject(new LauncherError("Could not start the configured provider CLI.")));
     child.once("spawn", () => {
-      if (!login && binding && account && agentId) {
-        receipt = atomicWrite(join(root, "receipts", `${encodeURIComponent(agentId)}.json`), JSON.stringify({ accountId: account.id, launchToken: binding.launchToken, pid: child.pid, at: new Date().toISOString() }));
+      if (marker || !login && binding && account && agentId) {
+        receipt = (async () => {
+          if (marker) {
+            await waitCursorMarker(marker.path, child.pid!);
+            if (cursorAcp) process.stdin.pipe(child.stdin!);
+          }
+          if (!login && binding && account && agentId) await atomicWrite(join(root, "receipts", `${encodeURIComponent(agentId)}.json`), JSON.stringify({ accountId: account.id, launchToken: binding.launchToken, pid: child.pid, at: new Date().toISOString() }));
+        })();
         // A receipt failure cannot be treated as a successful identity switch.
         receipt.catch(() => { child.kill("SIGTERM"); });
       }
     });
     child.once("close", (code, signal) => resolveExit({ code, signal }));
   });
-  const result = await exited;
-  await receipt;
+  let result: Awaited<typeof exited>;
+  try { result = await exited; await receipt; }
+  finally { await marker?.cleanup(); }
   await finishLogin(result.code ?? 1);
   for (const [signal, handler] of forward) process.removeListener(signal, handler);
   if (login && provider === "codex" && result.code !== 0) {

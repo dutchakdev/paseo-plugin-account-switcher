@@ -1,10 +1,10 @@
 import type { Account, AccountState, Provider, UsageSnapshot, UsageWindow } from "../shared/contracts";
 
-export const providerName: Record<Provider, string> = { claude: "Claude", codex: "Codex · ChatGPT" };
+export const providerName: Record<Provider, string> = { claude: "Claude", codex: "Codex · ChatGPT", cursor: "Cursor" };
 
 export function supportedProvider(value: string): Provider | null {
   const name = value.split("/")[0];
-  return name === "claude" || name === "codex" ? name : null;
+  return name === "claude" || name === "codex" || name === "cursor" ? name : null;
 }
 
 export function percent(value: number | null): string {
@@ -74,7 +74,7 @@ export function idleForSwitch(agent: {
   activeTurn?: unknown;
   pendingPermissions: readonly unknown[];
 } | null | undefined): boolean {
-  return Boolean(agent && agent.status === "idle" && !agent.activeTurn && agent.pendingPermissions.length === 0);
+  return Boolean(agent && ["idle", "error", "closed"].includes(agent.status) && !agent.activeTurn && agent.pendingPermissions.length === 0);
 }
 
 /** The model an agent runs, from its snapshot: running, then configured, then the `provider/model` suffix. */

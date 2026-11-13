@@ -31,7 +31,7 @@ if (args.includes('status')) {
  process.stdin.pipe(process.stdout);
 }
 `);
-  await store.change(registry => { registry.commands = { claude: [process.execPath, cli], codex: [process.execPath, cli] }; });
+  await store.change(registry => { registry.commands = { cursor: null, claude: [process.execPath, cli], codex: [process.execPath, cli] }; });
   return { root, store, cli };
 }
 
@@ -275,7 +275,7 @@ describe("auth and config integration", () => {
     await prepareRuntime(paseo, store);
     const registry = await store.read();
     expect(registry.integration).toMatchObject({ enabled: false, error: expect.stringMatching(/commands/i) });
-    expect(registry.available).toEqual({ claude: true, codex: false });
+    expect(registry.available).toEqual({ claude: true, codex: false, cursor: false });
     expect(registry.commands.codex).toBeNull();
     expect(patch).not.toHaveBeenCalled();
   });
@@ -319,14 +319,14 @@ describe("auth and config integration", () => {
     const patch = vi.fn(async change => { config = { providers: { ...config.providers, ...change.providers } }; return { config }; });
     const paseo = { config: { get: async () => ({ config }), patch } } as unknown as PaseoApi;
     await prepareRuntime(paseo, store);
-    expect((await store.read()).available).toEqual({ claude: true, codex: false });
+    expect((await store.read()).available).toEqual({ claude: true, codex: false, cursor: false });
     await installIntegration(paseo, store);
     expect(Object.keys(patch.mock.calls[0][0].providers)).toEqual(["claude"]);
     expect(config.providers.codex).toBeUndefined();
     await reconcileIntegration(paseo, store);
     let snapshot = await store.snapshot();
     expect(snapshot.integration).toEqual({ enabled: true, error: null });
-    expect(snapshot.providers).toEqual({ claude: { available: true, integrated: true }, codex: { available: false, integrated: false } });
+    expect(snapshot.providers).toEqual({ cursor: { available: false, integrated: false }, claude: { available: true, integrated: true }, codex: { available: false, integrated: false } });
 
     config.providers.codex = { command: [process.execPath, cli] };
     await prepareRuntime(paseo, store); await reconcileIntegration(paseo, store);
@@ -344,7 +344,7 @@ describe("auth and config integration", () => {
     const paseo = { config: { get: async () => ({ config: { providers: { codex: { command: [process.execPath, cli] } } } }), patch: vi.fn() } } as unknown as PaseoApi;
     await prepareRuntime(paseo, store);
     const registry = await store.read();
-    expect(registry.available).toEqual({ claude: false, codex: true });
+    expect(registry.available).toEqual({ claude: false, codex: true, cursor: false });
     expect(() => accountCommand(registry, "claude")).toThrow("Claude Code CLI was not found on the daemon");
     expect(accountCommand(registry, "codex")).toEqual([process.execPath, cli]);
   });
@@ -372,7 +372,7 @@ describe("auth and config integration", () => {
     await prepareRuntime(paseo, store); await reconcileIntegration(paseo, store);
     const registry = await store.read();
     expect(registry.integration).toEqual({ enabled: true, error: null, providers: ["claude", "codex"] });
-    expect(registry.available).toEqual({ claude: true, codex: false });
+    expect(registry.available).toEqual({ claude: true, codex: false, cursor: false });
     expect(registry.commands.codex).toEqual([codex]);
     expect((await store.snapshot()).providers.codex).toEqual({ available: false, integrated: true });
     expect(patch).not.toHaveBeenCalled();
@@ -385,7 +385,7 @@ describe("auth and config integration", () => {
     vi.stubEnv("PATH", join(root, "no provider cli"));
     await store.change(state => { state.integration.enabled = true; });
     const patch = vi.fn(), paseo = { config: { get: async () => ({ config: { providers: {} } }), patch } } as unknown as PaseoApi;
-    await expect(prepareRuntime(paseo, store)).rejects.toThrow("Provider CLI not found. Install Claude Code or Codex");
+    await expect(prepareRuntime(paseo, store)).rejects.toThrow("Provider CLI not found. Install Claude Code, Codex, or Cursor");
     expect((await store.read()).integration.enabled).toBe(false);
     await expect(installIntegration(paseo, store)).rejects.toThrow("Provider CLI not found");
     expect(patch).not.toHaveBeenCalled();
@@ -424,7 +424,7 @@ describe("auth and config integration", () => {
     expect(JSON.stringify(await store.read())).not.toContain("fixture-ambient-private");
     vi.unstubAllEnvs();
     await prepareRuntime(paseo, store);
-    expect((await store.read()).sourceHomes).toEqual({ claude: join(root, "claude-home"), codex: join(root, "codex-home") });
+    expect((await store.read()).sourceHomes).toMatchObject({ claude: join(root, "claude-home"), codex: join(root, "codex-home") });
     expect(patch).not.toHaveBeenCalled();
   });
 

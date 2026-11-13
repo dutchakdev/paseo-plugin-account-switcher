@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PaseoAgent, PaseoAgentUpdate } from "@getpaseo/client";
 import type { PluginClientContext, PluginComposerPillContribution } from "@getpaseo/plugin/client";
-import type { AccountState } from "../shared/contracts";
+import type { AccountState, UsageSnapshot } from "../shared/contracts";
 import { createClientRuntime } from "../client/runtime";
 
 function deferred<T>() {
@@ -19,10 +19,10 @@ const state: AccountState = {
     { id: "account-2", provider: "claude", source: "managed", label: "Team", authStatus: "ready", email: null, plan: null, createdAt: "2026-09-15" },
   ],
   bindings: [{ agentId: agent.id, provider: "claude", currentAccountId: "system-claude", pendingAccountId: "account-2", status: "ready", error: null }],
-  defaults: { claude: null, codex: null }, fallback: { claude: true, codex: true }, autoFailover: { claude: false, codex: false }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
+  defaults: { claude: null, codex: null , cursor: null}, fallback: { claude: true, codex: true }, autoFailover: { claude: false, codex: false }, integration: { enabled: true, error: null }, providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true }, cursor: { available: false, integrated: false } },
 };
 
-function harness(listResult: Promise<unknown> = Promise.resolve(page), accountState = state) {
+function harness(listResult: Promise<unknown> = Promise.resolve(page), accountState = state, usage: UsageSnapshot[] = []) {
   let listener: (update: PaseoAgentUpdate) => void = () => {};
   const remove = vi.fn();
   const update = vi.fn();
@@ -35,7 +35,7 @@ function harness(listResult: Promise<unknown> = Promise.resolve(page), accountSt
       subscribe: vi.fn((callback: typeof listener) => { listener = callback; return unsubscribe; }),
       list: vi.fn(() => listResult),
     } },
-    rpc: vi.fn(async (contract: { name: string }) => contract.name === "accounts.list" ? accountState : { accounts: [] }),
+    rpc: vi.fn(async (contract: { name: string }) => contract.name === "accounts.list" ? accountState : { accounts: usage }),
     addComposerPill: add,
     addCommandCenterItem: addItem,
   } as unknown as PluginClientContext;
@@ -124,15 +124,22 @@ describe("composer registration lifecycle", () => {
     expect(label).not.toContain("System");
     runtime.stop();
   });
-  it("labels the actual account while another account is prepared", async () => {
+  it.each(["claude", "codex", "cursor"] as const)("labels the actual %s account's usage while another account is prepared", async (provider) => {
     vi.useFakeTimers();
-    const host = harness();
+    const selected = structuredClone(state);
+    for (const account of selected.accounts) account.provider = provider;
+    selected.accounts[0].id = selected.bindings[0].currentAccountId = `system-${provider}`;
+    selected.bindings[0].provider = provider;
+    selected.providers[provider] = { available: true, integrated: true };
+    const usage: UsageSnapshot[] = selected.accounts.map((account, index) => ({
+      accountId: account.id, provider, status: "ok", plan: null, fetchedAt: null, checkedAt: "2026-11-13", nextRetryAt: null, error: null,
+      windows: [{ id: "plan", label: "Total", usedPercent: index ? 90 : 25, windowDurationMins: null, resetsAt: null }],
+    }));
+    const host = harness(Promise.resolve({ ...page, entries: [{ agent: { ...agent, provider } }] }), selected, usage);
     const runtime = createClientRuntime(host.context, () => null);
     await flush();
     const label = host.update.mock.lastCall?.[0].label ?? host.add.mock.lastCall?.[0]?.button.label;
-    expect(label).toContain("System");
-    expect(label).not.toContain("Team");
-    expect(label).toContain("→");
+    expect(label).toBe("System · 75% left →");
     runtime.stop();
     expect(host.remove).toHaveBeenCalledOnce();
     expect(host.unsubscribe).toHaveBeenCalledOnce();

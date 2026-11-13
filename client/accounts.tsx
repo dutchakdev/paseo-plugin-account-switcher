@@ -15,7 +15,7 @@ import { closeSignInTarget, visibleSignInTarget } from "./sign-in-state";
 export type AccountsProps = PluginSurfaceProps & { onChanged(): void; runtimeError?: string | null };
 
 const loginModes = [{ value: "device", label: "Device code" }, { value: "browser", label: "In browser" }] as const;
-const providers = [{ value: "claude", label: providerName.claude }, { value: "codex", label: providerName.codex }] as const;
+const providers = [{ value: "claude", label: providerName.claude }, { value: "codex", label: providerName.codex }, { value: "cursor", label: providerName.cursor }] as const;
 type ProviderOption = (typeof providers)[number];
 
 // A system account stands for a CLI the daemon does not have. Managed sign-ins stay listed so they can be removed.
@@ -58,7 +58,7 @@ function AddAccountForm({ theme, host, onChanged, initialProvider, options, onCl
 
 /** Whether a chat whose turn ran out of its account's limit offers a switch or makes it. `run` is the screen's action lock. */
 export function AutoFailoverSetting({ theme, provider, enabled, disabled, run }: ThemeProps & {
-  provider: Provider; enabled: boolean; disabled: boolean; run(action: () => Promise<unknown>): void;
+  provider: Exclude<Provider, "cursor">; enabled: boolean; disabled: boolean; run(action: () => Promise<unknown>): void;
 }) {
   const save = useRpc(setAutoFailover);
   return <SettingsSelect label="When a limit runs out during a chat" value={enabled ? "auto" : "offer"} disabled={disabled}
@@ -104,9 +104,11 @@ export function AccountsSurface(props: AccountsProps) {
     {accounts.error ? <Notice theme={theme} tone="danger">Could not refresh accounts: {errorMessage(accounts.error)}</Notice> : null}
     {usage.error ? <Notice theme={theme} tone="danger">Could not refresh limits: {errorMessage(usage.error)}</Notice> : null}
     {adding ? <AddAccountForm key={adding} {...props} initialProvider={adding} options={installed} onStarted={onStarted} onClose={() => setAdding(null)} /> : null}
-    {state ? (["claude", "codex"] as const).map((provider) => {
+    {state ? (["claude", "codex", "cursor"] as const).map((provider) => {
       const status = state.providers[provider];
       const group = state.accounts.filter((account) => account.provider === provider && listed(account, state));
+      // Cursor is optional: its group appears once Cursor is set up in Paseo or has accounts.
+      if (provider === "cursor" && !status.available && !state.accounts.some((account) => account.provider === "cursor")) return null;
       return <SettingsSection key={provider} title={providerName[provider]}>
         {!status.available ? <Notice theme={theme}>{missingCli(provider)}</Notice>
           : enabled && !status.integrated ? <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -114,7 +116,7 @@ export function AccountsSurface(props: AccountsProps) {
             <Button theme={theme} disabled={action.isPending} onPress={enableIntegration}>Enable</Button>
           </View> : null}
         {group.map((account) => <AccountCard key={account.id} {...props} account={account} state={state} snapshot={usage.data?.accounts.find((item) => item.accountId === account.id)} checksOff={checksOff} now={now} onStarted={onStarted} onResume={onResume} />)}
-        {group.length > 1 ? <SettingsCard>
+        {provider !== "cursor" && group.length > 1 ? <SettingsCard>
           {state.defaults[provider] ? <SettingsSelect label="When the default is unavailable" value={state.fallback[provider] ? "fallback" : "default"}
             hint="Applies to new agents. Existing chats keep their account." disabled={action.isPending}
             onValueChange={value => action.run(() => fallback({ provider, enabled: value === "fallback" }))}

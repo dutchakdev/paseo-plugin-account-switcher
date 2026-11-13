@@ -24,7 +24,7 @@ function transport(){
 async function fixture(provider:"claude"|"codex"="codex",timeoutMs?:number){
  const root=await mkdtemp(join(tmpdir(),"account-browser-login-"));roots.push(root);
  const store=new AccountStore(root);await store.initialize({claude:join(root,"source-claude"),codex:join(root,"source-codex")});
- await store.change(state=>{state.commands={claude:[process.execPath],codex:[process.execPath]};});
+ await store.change(state=>{state.commands = { cursor: null,claude:[process.execPath],codex:[process.execPath]};});
  const account=await store.add(provider,"Fixture account");await mkdir(account.home,{recursive:true});
  const fake=transport(),finish=vi.fn(async()=>true),sessions=new LoginSessions({createProcess:fake.createProcess,timeoutMs,finish});closers.push(()=>sessions.close());
  await sessions.start(account,await store.read(),root,"attempt-one");
@@ -108,7 +108,7 @@ it("caps login time and stops the process before calling completion",async()=>{
 async function controllerFixture(){
  const root=await mkdtemp(join(tmpdir(),"account-login-controller-"));roots.push(root);
  const fake=transport(),controller=new AccountController(root,{createProcess:fake.createProcess});closers.push(()=>controller.close());await controller.ready;
- await controller.store.change(state=>{state.sourceHomes={claude:join(root,"source-claude"),codex:join(root,"source-codex")};state.commands={claude:[process.execPath],codex:[process.execPath]};});
+ await controller.store.change(state=>{state.sourceHomes = { cursor: join(root,"source-cursor"),claude:join(root,"source-claude"),codex:join(root,"source-codex")};state.commands = { cursor: null,claude:[process.execPath],codex:[process.execPath]};});
  const account=await controller.add("codex","Fixture account");
  const paseo={} as PaseoApi;
  return{root,fake,controller,account,paseo};

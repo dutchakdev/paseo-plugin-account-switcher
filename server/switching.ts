@@ -36,7 +36,7 @@ export class SwitchService {
    if(this.applying.has(agentId))throw new SwitchRefusal("An account switch is already in progress.");
    const agent=await this.deps.inspect(agentId);
    if(agent.archived)throw new SwitchRefusal("The agent is archived.");
-   if(agent.provider!=="claude"&&agent.provider!=="codex")throw new SwitchRefusal("Only Claude and Codex are supported.");
+   if(agent.provider!=="claude"&&agent.provider!=="codex"&&agent.provider!=="cursor")throw new SwitchRefusal("Only Claude, Codex, and Cursor are supported.");
    return BindingSchema.parse(await this.deps.store.prepare(agentId,agent.provider,accountId));
  }
  /** `expected` is the account the caller showed or named; another client's later selection must not be applied in its place.
@@ -116,7 +116,7 @@ export class SwitchService {
    const evidence={defaultId:selected,accounts:state.accounts.filter(a=>a.provider===provider),usage,model,now:Date.now()};
    let chosen:string|undefined,defaultStatus:string|undefined;
    // With fallback off the default is binding, as before 0.7: the agent starts there or not at all.
-   for(const id of state.fallback[provider]?launchOrder(evidence):[selected]){
+   for(const id of provider!=="cursor"&&state.fallback[provider]?launchOrder(evidence):[selected]){
      const {authStatus}=await this.deps.checkAccount(id);
      if(id===selected)defaultStatus=authStatus;
      if(authStatus==="ready"){chosen=id;break;}
@@ -145,7 +145,7 @@ export class SwitchService {
    const account=accounts.find(a=>a.id===requested)??(named.length===1?named[0]:undefined);
    if(!account)throw new SwitchRefusal(named.length>1?`More than one ${cliName[provider]} account is named ${requested}; name it by its ID instead.`:`No ${cliName[provider]} account is named ${requested}.`);
    // Always use the default promises the default or nothing, so it outranks whoever creates the agent. With no default set it has nothing to keep.
-   const keepDefault=(r:Registry)=>{const selected=r.defaults[provider];if(selected&&!r.fallback[provider]&&selected!==account.id)throw new SwitchRefusal(`${cliName[provider]} always uses its default account, so the agent cannot start on ${account.label}. Choose Start on another account in Accounts to allow it.`);};
+   const keepDefault=(r:Registry)=>{const selected=r.defaults[provider];if(provider!=="cursor"&&selected&&!r.fallback[provider]&&selected!==account.id)throw new SwitchRefusal(`${cliName[provider]} always uses its default account, so the agent cannot start on ${account.label}. Choose Start on another account in Accounts to allow it.`);};
    keepDefault(state);
    if(account.loginToken)throw new SwitchRefusal(`Sign-in to ${account.label} is still in progress.`);
    const {authStatus}=await this.deps.checkAccount(account.id);

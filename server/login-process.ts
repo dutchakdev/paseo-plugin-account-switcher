@@ -15,11 +15,11 @@ export type CreateLoginProcess = (options: LoginProcessOptions) => LoginProcess;
 const supervisor = String.raw`
 const {spawn}=require('node:child_process');
 const fs=require('node:fs'),path=require('node:path');
-let child,config={receiptPath:process.argv[1],loginToken:process.argv[2]},launched=false,finished=false,stopping=false,forcedCode,killTimer,deadline;
+let child,config={receiptPath:process.argv[1],loginToken:process.argv[2]},launched=false,finished=false,stopping=false,forcedCode,killTimer,deadline,markerTimer,markerVerified=false;
 function kill(signal){if(!child?.pid)return;try{if(process.platform==='win32')child.kill(signal);else process.kill(-child.pid,signal);}catch(error){if(error.code!=='ESRCH')throw error;}}
 let finalizing=false;
 function finish(code){
- if(finished||finalizing)return;finalizing=true;clearTimeout(killTimer);
+ if(finished||finalizing)return;finalizing=true;clearTimeout(killTimer);clearTimeout(markerTimer);
  // A leader can exit while a descendant ignores TERM. Kill and observe the
  // entire isolated group before claiming that credential writes have stopped.
  try{kill('SIGKILL');}catch{}
@@ -52,16 +52,26 @@ process.on('message',message=>{
  launched=true;config={...config,...message};
  try{
   child=spawn(config.command[0],[...config.command.slice(1),...config.args],{env:config.env,cwd:config.cwd,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32',windowsHide:true});
+  if(config.env.PASEO_CURSOR_PRELOAD_MARKER){
+   const until=Date.now()+5000;
+   const check=()=>{try{if(fs.readFileSync(config.env.PASEO_CURSOR_PRELOAD_MARKER,'utf8')===String(child.pid)){markerVerified=true;return;}}catch{}if(Date.now()>=until)return stop(1);markerTimer=setTimeout(check,25);};
+   child.once('spawn',check);
+  }
   child.stdout.pipe(process.stdout);child.stderr.pipe(process.stderr);process.stdin.pipe(child.stdin);
-  child.stdin.on('error',()=>{});child.once('error',()=>finish(1));child.once('close',code=>finish(code??1));
+  child.stdin.on('error',()=>{});child.once('error',()=>finish(1));child.once('close',code=>{
+   if(config.env.PASEO_CURSOR_PRELOAD_MARKER&&!markerVerified)try{markerVerified=fs.readFileSync(config.env.PASEO_CURSOR_PRELOAD_MARKER,'utf8')===String(child.pid);}catch{}
+   finish(config.env.PASEO_CURSOR_PRELOAD_MARKER&&!markerVerified?1:code??1);
+  });
  }catch{finish(1);}
 });
 if(!process.connected)stop(1);else process.send({type:'ready'});
 `;
 
 export const createLoginProcess: CreateLoginProcess = options => {
+  const supervisorEnv = options.env.PASEO_CURSOR_AUTH_FILE
+    ? { ...options.env, NODE_OPTIONS: options.env.PASEO_CURSOR_ORIGINAL_NODE_OPTIONS } : options.env;
   const child = spawn(process.execPath, ["-e", supervisor, options.receiptPath, options.loginToken], {
-    cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe", "ipc"], windowsHide: true,
+    cwd: options.cwd, env: supervisorEnv, stdio: ["pipe", "pipe", "pipe", "ipc"], windowsHide: true,
   });
   let receipt: { code: number; receiptWritten: boolean } | undefined;
   let exited = false;

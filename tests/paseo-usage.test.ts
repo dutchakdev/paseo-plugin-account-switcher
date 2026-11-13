@@ -42,6 +42,10 @@ describe("discoverAccounts", () => {
   const system = account({ id: "system-claude", source: "system", label: "Current CLI · Claude", identityKey: claudeIdentity });
   const global = { kind: "global" } as const;
 
+  it("does not list Cursor accounts, which have no usage collector", () => {
+    expect(discoverAccounts(registry(account({ id: "cursor-work", provider: "cursor", identityKey: "cursor:work" })), global)).toEqual([]);
+  });
+
   it("lists a signed-in managed account with its label, harness and locator", () => {
     const work = account({ id: "work", label: "Work", identityKey: otherClaudeIdentity });
     const codex = account({ id: "codex-work", provider: "codex", label: "Team", identityKey: codexIdentity });

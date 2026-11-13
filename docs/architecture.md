@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-Account Switcher is an independent plugin for Paseo 0.11.0 and newer, including beta releases after 0.11.0. It uses public plugin and provider APIs; no Paseo core patch is required. The development SDK is pinned to 0.11.4, the oldest supported release, so typechecking shows the plugin uses only the 0.11 API. The screen API and the usage source are 0.11 APIs, so every supported release has them. The plugin still checks for them at runtime, falling back to the older surface API or skipping the usage source; on a supported host these checks are defensive and change nothing.
+Account Switcher is an independent plugin for Paseo 0.11.0 and newer, including beta releases after 0.11.0. It uses public Paseo plugin and provider APIs; no Paseo core patch is required. The development SDK is pinned to 0.11.4, the oldest supported release, so typechecking shows the plugin uses only the 0.11 API. The screen API and the usage source are 0.11 APIs, so every supported release has them. The plugin still checks for them at runtime, falling back to the older surface API or skipping the usage source; on a supported host these checks are defensive and change nothing.
 
 ```mermaid
 flowchart LR
@@ -14,7 +14,7 @@ flowchart LR
   Launcher -->|Startup receipt| Controller
   Controller --> Login[Background official CLI sign-in]
   Controller --> Monitor[Limits monitor]
-  Monitor --> Native[Codex app-server or Claude usage endpoint]
+  Monitor --> Native[Provider CLI or usage API]
   Monitor -->|Cached readings| Source[Usage source]
   Source --> PaseoUsage[Paseo Usage view]
   Controller -->|Session env| PaseoPopover[Paseo usage popover]
@@ -34,24 +34,33 @@ Plugins run with the daemon user's permissions. An account profile separates aut
 
 ## Accounts and profiles
 
-Each provider has a **system** account that references its existing CLI home and a set of plugin-managed accounts with separate homes. System accounts cannot be deleted. Ordinary settings are sourced from the provider home saved during command discovery, including supported `CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, and `CODEX_HOME` paths.
+Claude and Codex have **system** accounts referencing their existing CLI homes. Cursor gets one when discovery finds an enabled `cursor` provider in Paseo. Managed accounts have separate homes; system accounts cannot be deleted. Ordinary settings are sourced from the provider home saved during command discovery, including supported `CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, and `CODEX_HOME` paths.
 
 | Provider | Isolated per managed account | Shared with the source profile |
 | --- | --- | --- |
 | Claude | Credentials, OAuth identity metadata, and the profile-specific macOS Keychain namespace | Ordinary settings and MCP configuration; skills, commands, agents, plugins, rules, instructions, `projects`, and `file-history` |
 | Codex | File-based `auth.json` and OAuth identity metadata | Ordinary configuration and instructions; skills, rules, memories, plugins, sessions, archived sessions, writer locks, temporary session data, and SQLite home |
+| Cursor | `cursor/auth.json`, `cursor/cli-auth.json` for team/privacy state, and a worker socket | Normal `HOME` and `XDG_CONFIG_HOME`; settings, skills and `acp-sessions` under the shared `CURSOR_CONFIG_DIR` |
 
 Shared directories use links; selected configuration files are copied or merged when preparing a profile. Unchanged contents are not rewritten. Claude's profile-local project trust and history metadata are preserved while ordinary shared configuration is merged.
 
-Managed environments remove authentication overrides and select the intended home. Conflicting API-key, provider, or endpoint settings are rejected. Missing or redirected managed homes fail rather than falling back to another account.
+Cursor uses the Node preload in `server/cursor-runtime.ts` to redirect supported credential file calls and split `authInfo` and `privacyCache` out of the shared `cli-config.json`. Managed macOS accounts select the file credential store. Cursor and its tools keep the normal `HOME` and `XDG_CONFIG_HOME`; `CURSOR_CONFIG_DIR` stays shared so reloading can find the same ACP session. Other child commands do not inherit the account preload.
+
+Cursor's own workspace worker receives the profile and an account-specific socket. A worker spawn with an unverified socket is refused. These hooks depend on Cursor's internal paths and Node APIs. A CLI that reads its credentials or config differently never confirms the launch, so managed launches, sign-in checks and sign-ins fail; credential writes through calls the preload does not redirect would reach the CLI's own login location. A changed worker connection can still reach an existing shared worker, or start a worker another way, without detection.
+
+Managed environments remove authentication overrides and select the intended home. Conflicting API-key, provider, or endpoint settings are rejected. Missing or redirected managed homes, and a managed Cursor profile whose credential folder or file is a symbolic link, fail rather than falling back to another account.
 
 ## Integration and switching
 
-Enabling integration saves the original Claude and Codex commands and configures Paseo to invoke the plugin's launchers. Discovery resolves the real CLI first, so launchers do not recursively invoke themselves. A provider whose CLI cannot be resolved is marked unavailable and keeps its Paseo command; the registry records which providers integration owns, so installing the missing CLI later leaves the others integrated until **Enable** adds it. Discovery fails only when neither CLI resolves. The plugin checks command ownership again at runtime. External command changes disable integration and invalidate outstanding startup tokens; restoring the wrapper path alone does not re-enable it.
+Enabling integration saves the original provider commands and configures Paseo to invoke the plugin's launchers. Discovery resolves the real CLI first, so launchers do not recursively invoke themselves. A provider whose CLI cannot be resolved is marked unavailable and keeps its Paseo command; the registry records which providers integration owns, so installing the missing CLI later leaves the others integrated until **Enable** adds it. Discovery fails only when no supported CLI resolves. The plugin checks command ownership again at runtime. External command changes disable integration and invalidate outstanding startup tokens; restoring the wrapper path alone does not re-enable it.
 
-An agent binding records its confirmed current account separately from its pending selection and requested launch account. **Prepare** changes only the selection. **Apply** verifies identity and idle state, reserves a launch token, and invokes `paseo agent reload` against the same daemon.
+A disabled Cursor entry still pointing at its launcher keeps command ownership. Removing a provider's entry from Paseo drops only that provider's ownership and pending launches; its accounts remain manageable, and the other providers stay integrated. The provider ID must remain `cursor` with `extends: "acp"` to select Paseo's native Cursor adapter. The launcher passes ACP messages through unchanged; model-picker compatibility belongs to Paseo.
+
+An agent binding records its confirmed current account separately from its pending selection and requested launch account. **Prepare** changes only the selection. **Apply** verifies identity and idle state, reserves a launch token, and requests Paseo's native agent reload against the same daemon.
 
 The launcher chooses the assigned profile and writes a startup receipt containing the matching account and launch token. The controller confirms the switch only after reload succeeds and the receipt matches. A failure after the binding enters `switching` triggers an attempt to restore the previous profile; a refusal before that point changes nothing. A failed rollback or interrupted switch leaves the account unconfirmed instead of displaying an assumed account.
+
+Managed Cursor waits for the preload marker before forwarding ACP input and writing the receipt. The marker records access to the selected credential and config paths, not a successful read or authenticated session. Credentials lost after the readiness check can still leave the session failing with `Authentication required`.
 
 A new agent's binding stays unconfirmed (`currentAccountId` null) until a receipt check confirms its launch account: the receipt names that account and launch token, and the agent's session is `idle` or `running`. `controller.snapshot` runs the check for every binding as the app polls `accounts.list`; `controller.accountOf` runs it for one agent when failover or a switch note needs that agent's account, so an agent started with no app open (a schedule, a heartbeat, `paseo run`) is confirmed too. For failover the check also accepts an agent in `error`: Paseo sets that status when a turn fails, before `agent.turn_ended` fires, and the launcher wrote the receipt when it started the CLI, so the receipt still names the account the agent started on. The two status lists are passed to the shared check explicitly.
 
@@ -59,19 +68,23 @@ Paseo reports no failed creation, so `reconcileDeletedAgents` treats a new agent
 
 Any binding then goes only when Paseo answers null for the agent itself. The agent list is not enough: it leaves out agents in background workspaces, among others. An error from that lookup keeps the binding.
 
-A provider default is assigned during interactive agent creation, unless the cached limits prove it would fail and the registry's per-provider `fallback` is on (the default; registries from 0.6 read as on). With `fallback` off, only the default is tried. The `agent.create` hook stores the requested model in a private environment variable; Paseo passes that environment to the same agent's first `agent.session_open`, which has the agent ID, binds the agent and removes the variable before the CLI starts.
+A provider default is assigned during interactive agent creation, unless Claude or Codex limits prove it would fail and the registry's per-provider `fallback` is on (the default; registries from 0.6 read as on). With `fallback` off, only the default is tried. The `agent.create` hook stores the requested model in a private environment variable; Paseo passes that environment to the same agent's first `agent.session_open`, which has the agent ID, binds the agent and removes the variable before the CLI starts.
 
-The creator can name the account instead, with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment (an account ID, or a name that exactly one account of the provider has). `bindRequested` probes only that account and binds it regardless of limits, or refuses the creation: no such account, `fallback` off with another account as the default, a sign-in in progress (both checked again inside the registry change), an official probe that is not `ready`, integration off for the provider, or a provider other than Claude and Codex. The hook removes the variable from every session open, so neither the CLI nor a later session sees it. A value in a provider's configured environment joins after the hook, so it selects nothing and does reach the CLI. A binding made this way is like any other afterwards; its creation note gives the reason `requested` when the account is not the default.
+The creator can name the account instead, with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` in the agent's environment (an account ID, or a name that exactly one account of the provider has). `bindRequested` probes only that account and binds it regardless of limits, or refuses the creation: no such account, `fallback` off for Claude or Codex with another account as the default, a sign-in in progress (both checked again inside the registry change), an official probe that is not `ready`, integration off for the provider, or a provider other than Claude, Codex and Cursor. The hook removes the variable from every session open, so neither the CLI nor a later session sees it. A value in a provider's configured environment joins after the hook, so it selects nothing and does reach the CLI. A binding made this way is like any other afterwards; its creation note gives the reason `requested` when the account is not the default.
+
+Cursor probes only its selected default or explicitly requested account. Its usage readings do not drive fallback or automatic switching.
 
 ```mermaid
 flowchart TD
   A[agent.session_open, reason create] --> R{account named<br/>at creation?}
-  R -- yes --> Q{fallback off,<br/>and not the default?}
+  R -- yes --> Q{Claude/Codex fallback off,<br/>and not the default?}
   Q -- yes --> X[refuse the creation]
   Q -- no --> S[probe that account only] --> H
   R -- no --> B{default set?}
   B -- no --> Z[no binding: the CLI's own sign-in]
-  B -- yes --> C[launchOrder: cached limits + model]
+  B -- yes --> P{Claude or Codex?}
+  P -- no --> S
+  P -- yes --> C[launchOrder: cached limits + model]
   C --> D{default exhausted, or plan lacks the model?}
   D -- no --> E[default first, then spares by room]
   D -- yes --> F[spares by room, unknown last, default last]
@@ -100,6 +113,8 @@ Paseo's built-in usage sources find an agent's login from that session's launch 
 
 A managed home links the shared directories to the source home, so other reads of the variable by Paseo see the same settings and sessions.
 
+For Cursor on Linux, `profileEnv` sets `XDG_CONFIG_HOME` to the managed home so Paseo's usage source finds its credentials. The launcher restores the original environment before starting Cursor. On macOS the hook selects the `memory` credential store for Paseo's usage reader to prevent reading the system login; the launcher restores the managed file store. The native per-chat usage popover is therefore unavailable for managed Cursor on macOS.
+
 ### The host's Check usage setting
 
 Paseo 0.15 adds a host setting that turns usage checks off, stored as `daemon.usage.enabled` in `config.json`. Paseo's own gate covers its usage requests but not this plugin's collector, so the collector reads the same value before each round and manual refresh. While it is off, the plugin requests nothing, keeps what it already read, and looks at no turn for failover, because an old reading is no proof that an account ran out. Only an explicit `false` counts, so a host without the setting stays on.
@@ -108,7 +123,7 @@ Paseo 0.15 adds a host setting that turns usage checks off, stored as `daemon.us
 
 `server/paseo-usage.ts` registers a usage source named **Account Switcher** (`id: "account-switcher"`) when `server.registerUsageSource` exists, and does nothing otherwise. Its input is `{ accountId }`, a registry locator and never a credential.
 
-- `discover` answers only the `global` scope: managed accounts that are signed in, not in the middle of a sign-in, and with an `identityKey`. Accounts whose identity equals the same provider's system account are left out, since Paseo's own card covers that login. The key is the Codex account ID, or a Claude identity with `claude:` written `claude-`. A value Paseo would refuse (a character outside `[A-Za-z0-9._-]`, or longer than 128) is replaced by a hash, so no email is exposed. The `session` scope returns nothing: with the session environment in place Paseo's own source reports that account, and a second report would show it twice.
+- `discover` answers only the `global` scope: managed Claude and Codex accounts that are signed in, not in the middle of a sign-in, and with an `identityKey`. Accounts whose identity equals the same provider's system account are left out, since Paseo's own card covers that login. The key is the Codex account ID, or a Claude identity with `claude:` written `claude-`. A value Paseo would refuse (a character outside `[A-Za-z0-9._-]`, or longer than 128) is replaced by a hash, so no email is exposed. The `session` scope returns nothing: with the session environment in place Paseo's own source reports that account, and a second report would show it twice. Cursor is excluded from this source; its collected usage is shown in Accounts and the chat account switcher, while Paseo's own Cursor usage source is independent.
 - Known limitation: one managed account can appear twice in the Usage view. Paseo ids a report as `<source id>:<key>`, and its merge adds accounts found through agent sessions to the global list. With the session environment above, opening the usage details of an agent on a managed account lets Paseo's own Claude or Codex source find that login, so the view can show *Claude · email* next to *Account Switcher · Work*. The plugin keeps its source, since cards of different sources cannot be merged from a plugin.
 - `fetch` maps the controller's cached snapshot and makes no provider request. `ok` and `stale` give an available report with the plan and one window per reading that has a percentage or a detail (Claude names some limits without data; Paseo's own sources leave those out too), a duration from the reported minutes, a `scope` for model windows, the reading's `detail` as a detail, and account-wide windows marked as the summary. `needs_auth` and `unavailable` give an error with a fixed short message.
 - Window ids come from the quota's label, not from the response position. Paseo matches pinned windows by id, and the collectors' own ids are positions (`weekly_scoped:0`, `gpt-5.3-codex-spark:primary`) that shift when a provider reorders its response. The label names the quota; Codex's `· primary` or `· secondary` slot suffix is dropped. Two readings that name the same quota and period get `:2`, `:3` and so on, the only place order enters an id.
@@ -149,11 +164,11 @@ flowchart TD
 - **The switch.** Button and automatic switching share one function: it appends the `switching` row, then runs `SwitchService.switchTo`, the same `prepare` and `apply` as `/account` in one step, which check the account's identity, that the agent is idle and has no pending permission request, and the launch receipt. A refusal before the binding enters `switching` puts the binding's selection, status, error and launch token back as they were, and drops a binding the step created, so no selection the user never made stays pending; a failure after that point rolls back as **Apply** does. On success it rewrites the row, refreshes the new account's limits, and sends the agent `Continue.`, except after an automatic switch on a completed Claude turn, which may have finished for real; a prompt that cannot be delivered is only logged, because the switch stands.
 - **What a failure shows.** The switch service's own refusals are `SwitchRefusal` errors, including those its controller dependencies raise (integration changing, agent not found, reload failed). Only their messages reach the row and the RPC; `failover.apply`'s own answers (another agent's row, a missing account, an unconfirmed or stale offer) are refusals too. Any other error, whose text can name files, shows *The switch failed; the plugin log has details.* and goes to `console.error`, including one from `failover.apply`'s checks before the switch starts (reading the registry, confirming the agent's account).
 - **One at a time.** A set of agents with a switch in flight is claimed before any await. The hook ignores a turn reported again while a switch is under way, after its automatic switch, or while the binding is `switching`, so a repeated report cannot roll the row back to an offer.
-- **Automatic switching.** The registry holds `autoFailover` per provider (off by default; registries from before it read as off), set by `accounts.auto-failover` from the setting in Accounts, which shows for a provider with more than one account. When on, an offer goes through `AutoFailoverGuard` first: one switch per turn, three per agent in a rolling hour, and never to an account the agent left in that hour. It lives in memory and resets with the daemon. The switch is not awaited by the hook, because reloading the agent and waiting for its launch takes longer than Paseo waits for a hook; the row reports progress. When the guard refuses, the ordinary offer appears instead.
+- **Automatic switching.** The registry holds `autoFailover` per provider (off by default; registries from before it read as off), set by `accounts.auto-failover` from the setting in Accounts, which shows for Claude or Codex with more than one account. When on, an offer goes through `AutoFailoverGuard` first: one switch per turn, three per agent in a rolling hour, and never to an account the agent left in that hour. It lives in memory and resets with the daemon. The switch is not awaited by the hook, because reloading the agent and waiting for its launch takes longer than Paseo waits for a hook; the row reports progress. When the guard refuses, the ordinary offer appears instead.
 
 ## Sign-in
 
-The daemon runs the official provider CLI under the managed profile. Claude uses its native subscription login; Codex uses app-server login with browser or device-code mode. The plugin accepts only the expected official authorization URL formats and keeps temporary links and codes in memory.
+The daemon runs the official provider CLI under the managed profile. Claude uses its native subscription login; Codex uses app-server login with browser or device-code mode. Cursor uses `cursor-agent login` in the browser and `status --format json` to verify identity. The plugin accepts only the expected official authorization URL formats and keeps temporary links and codes in memory.
 
 A persisted reservation prevents another sign-in or account switch while a process may still use the profile. Completion requires the matching process receipt and an identity check. Cancel stops the process before releasing the reservation; uncertain termination keeps the account reserved for recovery. Reload cleanup stops active sign-ins.
 
@@ -163,7 +178,7 @@ The UI uses the public host modal and clipboard API. In the Electron desktop app
 
 The monitor checks every account every five minutes. A visible UI renews a 90-second lease, reducing the interval to 60 seconds. A passed reset time schedules another check without fabricating new values. At most two account workflows run concurrently, with one per account. Provider backoff applies to manual refresh too; `Retry-After` takes priority and other retries increase to a maximum of 30 minutes.
 
-Codex limits come from a short-lived official app-server process using `account/read` and `account/rateLimits/read`. Claude uses the OAuth usage endpoint with the selected profile's credentials; on macOS, it follows that profile's Keychain/file precedence. No collector creates a model turn. Credential refresh is left to the official CLI: when identity verification for a limits check finds an expired Claude access token, it first runs `claude -p /usage --no-session-persistence` under that account, at most every 10 minutes per account, so the proof and the request cover the renewed token.
+Codex limits come from a short-lived official app-server process using `account/read` and `account/rateLimits/read`. Claude uses the OAuth usage endpoint with the selected profile's credentials; on macOS, it follows that profile's Keychain/file precedence. Cursor calls its dashboard usage endpoint with the selected access token. No collector creates a model turn. Credential refresh is left to the official CLI: when identity verification for a limits check finds an expired Claude access token, it first runs `claude -p /usage --no-session-persistence` under that account, at most every 10 minutes per account, so the proof and the request cover the renewed token.
 
 Identity checks bracket collection. The cache can retain stale data only when its identity remains verified; replacement or unknown credentials cannot inherit another account's limits. Restored disk data stays hidden until identity verification. Retry deadlines are in memory and reset when the monitor restarts.
 
@@ -176,3 +191,5 @@ The root is `$PASEO_HOME/account-switcher`, or `~/.paseo/account-switcher` by de
 The registry includes account labels, identity metadata, original commands, defaults, per-provider fallback and automatic-failover choices, and bindings. Access and refresh tokens stay in provider-owned credential storage. They are not returned through plugin RPCs or written to the limits cache. The sign-in RPC exposes only the temporary authorization information needed for that attempt.
 
 Deleting a managed account removes its local profile and its exact Claude Keychain item where applicable. Shared provider history remains. Removing the Paseo plugin installation does not remove this separate data directory. Back it up as private authentication-related data; do not attach it to public issues.
+
+The registry remains version 1. Older releases ignore extra object fields but reject Cursor provider values in accounts, bindings or integration ownership. Registries without Cursor records remain readable by the previous release; once Cursor is configured, downgrading requires a compatible backup. See [downgrade recovery](installation.md#update).

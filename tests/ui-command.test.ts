@@ -4,9 +4,9 @@ import type { Account, AccountState } from "../shared/contracts";
 
 const account = (id: string, label: string, provider: "claude" | "codex" = "codex", extra: Partial<Account> = {}): Account =>
   ({ id, provider, label, source: "managed", email: null, plan: null, authStatus: "ready", createdAt: "2026-10-27T00:00:00Z", ...extra });
-const state = (accounts: Account[], defaults = { claude: null, codex: null } as AccountState["defaults"]): AccountState => ({
+const state = (accounts: Account[], defaults = { claude: null, codex: null , cursor: null} as AccountState["defaults"]): AccountState => ({
   accounts, bindings: [], defaults, fallback: { claude: true, codex: true }, autoFailover: { claude: false, codex: false }, integration: { enabled: true, error: null },
-  providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true } },
+  providers: { claude: { available: true, integrated: true }, codex: { available: true, integrated: true }, cursor: { available: false, integrated: false } },
 });
 const accounts = [account("cli", "Current CLI · Codex", "codex", { source: "system" }), account("work", "Work"), account("workshop", "Workshop"), account("second", "Second"), account("claude", "Work", "claude")];
 
@@ -29,13 +29,13 @@ describe("/account arguments", () => {
       .toEqual({ kind: "error", message: "No Codex account is named “home”. Accounts: Current CLI · Codex, Work, Workshop, Second." });
   });
   it("resolves `default` to the provider's default account", () => {
-    expect(resolveAccountArgument(state(accounts, { claude: null, codex: "second" }), "codex", "default")).toEqual({ kind: "account", account: accounts[3] });
+    expect(resolveAccountArgument(state(accounts, { claude: null, codex: "second", cursor: null }), "codex", "default")).toEqual({ kind: "account", account: accounts[3] });
     expect(resolveAccountArgument(state(accounts), "codex", "default"))
       .toEqual({ kind: "error", message: "No default Codex account is set. Choose one in Accounts." });
   });
   it("lets an account named Default win over the keyword", () => {
     const named = account("named-default", "Default");
-    expect(resolveAccountArgument(state([...accounts, named], { claude: null, codex: "second" }), "codex", "default")).toEqual({ kind: "account", account: named });
+    expect(resolveAccountArgument(state([...accounts, named], { claude: null, codex: "second", cursor: null }), "codex", "default")).toEqual({ kind: "account", account: named });
   });
   it("refuses an account that is not signed in", () => {
     expect(resolveAccountArgument(state([account("w", "Waiting", "codex", { authStatus: "needs_auth" })]), "codex", "waiting"))
@@ -45,7 +45,7 @@ describe("/account arguments", () => {
 
 describe("Command Center defaults", () => {
   it("offers each signed-in account that is not already its provider's default", () => {
-    const items = defaultCommands(state(accounts, { claude: null, codex: "second" }));
+    const items = defaultCommands(state(accounts, { claude: null, codex: "second", cursor: null }));
     expect(items.map((item) => item.title)).toEqual([
       "Make “Current CLI · Codex” the Codex default", "Make “Work” the Codex default", "Make “Workshop” the Codex default", "Make “Work” the Claude default",
     ]);
@@ -88,6 +88,6 @@ describe("/account on an agent", () => {
       await expect(runAccountCommand("codex", "agent", args, value)).resolves.toBe("opened");
       expect(calls.prepare).not.toHaveBeenCalled();
     }
-    await expect(runAccountCommand(null, "agent", "work", deps().value)).rejects.toThrow(/Claude and Codex only/);
+    await expect(runAccountCommand(null, "agent", "work", deps().value)).rejects.toThrow(/Claude, Codex, and Cursor/);
   });
 });

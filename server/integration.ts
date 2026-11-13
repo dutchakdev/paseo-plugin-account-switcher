@@ -8,13 +8,15 @@ import type { AccountStore, Registry } from "./store";
 import { atomicWrite } from "./files";
 import { LAUNCHER_SOURCE } from "./launcher-artifact";
 import { assertSubscriptionEnvironment } from "./profiles";
+import { CURSOR_PRELOAD } from "./cursor-runtime";
 
-const providers = ["claude", "codex"] as const;
+const providers = ["claude", "codex", "cursor"] as const;
 const COMMAND_DRIFT = "Provider commands changed outside the plugin. Enable integration again to apply accounts.";
-export const NO_PROVIDER_CLI = "Provider CLI not found. Install Claude Code or Codex, or configure its command in Paseo.";
+export const NO_PROVIDER_CLI = "Provider CLI not found. Install Claude Code, Codex, or Cursor, or configure its command in Paseo.";
 export const launcherPath = (root: string, provider: Provider): string => join(root, "bin", `${provider}-launcher`);
 export async function writeLaunchers(store: AccountStore): Promise<void> {
   for (const provider of providers) await atomicWrite(launcherPath(store.root, provider), LAUNCHER_SOURCE, 0o700);
+  await atomicWrite(join(store.root, "bin", "cursor-preload.cjs"), CURSOR_PRELOAD);
 }
 
 function commandArray(value: unknown): string[] | null {
@@ -43,20 +45,30 @@ export async function prepareRuntime(paseo: PaseoApi, store: AccountStore): Prom
   await discoverCommands(paseo, store);
 }
 
+function invalidateLaunch(binding: Registry["bindings"][number], error: string): void {
+  const awaitingReceipt = binding.launchToken !== null && binding.currentAccountId === null;
+  binding.launchToken = null;
+  if (binding.status === "switching" || awaitingReceipt) {
+    binding.currentAccountId = null; binding.status = "error"; binding.error = error;
+  }
+}
+
 function disableIntegration(state: Registry, error: string): void {
   state.integration = { ...state.integration, enabled: false, error };
-  for (const binding of state.bindings) {
-    const awaitingReceipt = binding.launchToken !== null && binding.currentAccountId === null;
-    binding.launchToken = null;
-    if (binding.status === "switching" || awaitingReceipt) {
-      binding.currentAccountId = null; binding.status = "error"; binding.error = error;
-    }
-  }
+  for (const binding of state.bindings) invalidateLaunch(binding, error);
+}
+
+// A provider whose Paseo entry was removed leaves the integration and loses its pending launches; the others keep running.
+function dropRemovedProviders(state: Registry, entries: Record<string, unknown>): void {
+  const removed = state.integration.providers.filter(provider => !entries[provider]);
+  if (!removed.length) return;
+  state.integration.providers = state.integration.providers.filter(provider => !removed.includes(provider));
+  for (const binding of state.bindings) if (removed.includes(binding.provider)) invalidateLaunch(binding, COMMAND_DRIFT);
 }
 
 export async function reconcileIntegration(paseo: PaseoApi, store: AccountStore): Promise<void> {
   const registry = await store.read();
-  let ownership: Provider[];
+  let ownership: Provider[], entries: Record<string, unknown>;
   try {
     const { config } = await paseo.config.get();
     for (const provider of providers) {
@@ -67,6 +79,7 @@ export async function reconcileIntegration(paseo: PaseoApi, store: AccountStore)
       assertSubscriptionEnvironment(provider, environment && typeof environment === "object" ? environment as Record<string, unknown> : {});
     }
     ownership = providers.filter(provider => owned(commandArray(config.providers[provider]?.command), launcherPath(store.root, provider)));
+    entries = config.providers;
   } catch {
     const message = "Could not verify Paseo provider commands. Check the configuration and authentication overrides, then enable integration again.";
     await store.change(state => { disableIntegration(state, message); });
@@ -74,8 +87,11 @@ export async function reconcileIntegration(paseo: PaseoApi, store: AccountStore)
   }
   // Restoring the wrapper paths alone cannot authorize old launch receipts.
   // Only explicit installIntegration enables a disabled registry again.
-  if (ownership.length && sameProviders(ownership, registry.integration.providers)) return;
+  const kept = registry.integration.providers.filter(provider => entries[provider]);
+  if (ownership.length && sameProviders(ownership, kept) && kept.length === registry.integration.providers.length) return;
   await store.change(state => {
+    dropRemovedProviders(state, entries);
+    if (ownership.length && sameProviders(ownership, state.integration.providers)) return;
     if (state.integration.enabled || ownership.length || state.bindings.some(binding => binding.launchToken !== null)) disableIntegration(state, COMMAND_DRIFT);
   });
 }
@@ -92,11 +108,14 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
   const { config } = await paseo.config.get(); const registry = await store.read();
   const wrappers = providers.map(provider => launcherPath(store.root, provider));
   const commands = { ...registry.commands }, originals = { ...registry.originalCommands }, sourceHomes = { ...registry.sourceHomes };
-  const sourceEnvironment: typeof registry.sourceEnvironment = { claude: {}, codex: {} };
-  const available = { claude: false, codex: false };
+  const sourceEnvironment: typeof registry.sourceEnvironment = { claude: {}, codex: {}, cursor: {} };
+  const available = { claude: false, codex: false, cursor: false };
   const ownership: Provider[] = [];
+  const cursorConfigured = (process.platform === "linux" || process.platform === "darwin") && !!config.providers.cursor && config.providers.cursor.enabled !== false;
   for (const provider of providers) {
     const current = commandArray(config.providers[provider]?.command);
+    // A disabled or removed Cursor is skipped, except for an entry that still runs through the launcher.
+    if (provider === "cursor" && !cursorConfigured && !owned(current, launcherPath(store.root, provider))) continue;
     if (owned(current, launcherPath(store.root, provider))) {
       ownership.push(provider);
       if (!commands[provider]) throw new Error("The launcher is active without the original CLI command; restore the configuration manually.");
@@ -106,7 +125,7 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
       available[provider] = resolved !== null;
     } else {
       originals[provider] = current;
-      commands[provider] = await resolveCommand(current ?? [provider], wrappers);
+      commands[provider] = await resolveCommand(current ?? (provider === "cursor" ? ["cursor-agent", "acp"] : [provider]), wrappers);
       available[provider] = commands[provider] !== null;
     }
     if (!available[provider]) { Object.assign(sourceEnvironment[provider], registry.sourceEnvironment[provider]); continue; }
@@ -114,7 +133,7 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
     const configured = environment && typeof environment === "object" ? environment as Record<string, unknown> : {};
     assertSubscriptionEnvironment(provider, process.env);
     assertSubscriptionEnvironment(provider, configured);
-    const keys = provider === "claude" ? ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] as const : ["CODEX_HOME"] as const;
+    const keys = provider === "claude" ? ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] as const : provider === "cursor" ? ["XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR"] as const : ["CODEX_HOME"] as const;
     for (const key of keys) {
       const value = configured[key] ?? process.env[key];
       // An explicitly empty override selects the default credential namespace.
@@ -127,14 +146,23 @@ async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
         (sourceEnvironment[provider] as Record<string, string>)[key] = value;
       }
     }
-    const value = provider === "claude" ? sourceEnvironment.claude.CLAUDE_CONFIG_DIR : sourceEnvironment.codex.CODEX_HOME;
-    sourceHomes[provider] = typeof value === "string" && isAbsolute(value) ? resolve(value) : join(homedir(), provider === "claude" ? ".claude" : ".codex");
+    // Pin one shared session/settings home for probes, logins and every account launch.
+    if (provider === "cursor") sourceEnvironment.cursor.CURSOR_CONFIG_DIR ||= join(homedir(),".cursor");
+    if (provider === "cursor") {
+      const store = configured.AGENT_CLI_CREDENTIAL_STORE ?? process.env.AGENT_CLI_CREDENTIAL_STORE;
+      if (typeof store === "string") sourceEnvironment.cursor.AGENT_CLI_CREDENTIAL_STORE = store;
+    }
+    const value = provider === "claude" ? sourceEnvironment.claude.CLAUDE_CONFIG_DIR : provider === "cursor" ? sourceEnvironment.cursor.XDG_CONFIG_HOME : sourceEnvironment.codex.CODEX_HOME;
+    sourceHomes[provider] = provider === "cursor" && process.platform === "darwin" ? homedir() : typeof value === "string" && isAbsolute(value) ? resolve(value) : join(homedir(), provider === "claude" ? ".claude" : provider === "cursor" ? ".config" : ".codex");
   }
-  if (!available.claude && !available.codex) throw new Error(NO_PROVIDER_CLI);
+  if (!available.claude && !available.codex && !available.cursor) throw new Error(NO_PROVIDER_CLI);
   await writeLaunchers(store);
   // The wrapper must see its originals before the daemon can run provider discovery.
   await store.change(state => {
     state.commands = commands; state.originalCommands = originals; state.sourceHomes = sourceHomes; state.sourceEnvironment = sourceEnvironment; state.available = available;
+    // Cursor's own login is listed once Cursor is set up; accounts stay manageable if it is removed later.
+    if (cursorConfigured && !state.accounts.some(account => account.id === "system-cursor")) state.accounts.push({ id: "system-cursor", provider: "cursor", label: "Current CLI · Cursor", source: "system", home: sourceHomes.cursor, email: null, plan: null, authStatus: "unknown", createdAt: new Date().toISOString(), identityKey: null, generation: 0, loginToken: null });
+    dropRemovedProviders(state, config.providers);
     if (!sameProviders(ownership, state.integration.providers) && (ownership.length || state.integration.enabled || state.bindings.some(binding => binding.launchToken !== null))) disableIntegration(state, COMMAND_DRIFT);
     for (const account of state.accounts) if (account.source === "system") account.home = sourceHomes[account.provider];
   });

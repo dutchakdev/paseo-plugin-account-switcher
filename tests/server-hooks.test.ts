@@ -67,13 +67,13 @@ const opening = (env: Record<string, string>, reason = "create") =>
   ({ agentId: "agent-1", workspaceId: null, provider: "codex", cwd: "/work", reason, purpose: "interactive", env });
 
 describe("the agent's model on its way to account selection", () => {
-  it("carries the requested model from creation to the new agent's binding, and not into the CLI environment", async () => {
+  it.each(["codex", "cursor"])("binds %s while keeping model-based selection limited to providers with usage data", async (provider) => {
     const before = start();
-    const created = await before.get("agent.create")!({ request: { config: { provider: "codex", cwd: "/work", model: "gpt-6.1-sol" }, env: { KEEP: "1" } } }, { paseo: {} });
+    const created = await before.get("agent.create")!({ request: { config: { provider, cwd: "/work", model: "gpt-6.1-sol" }, env: { KEEP: "1" } } }, { paseo: {} });
     expect(created.env).toMatchObject({ KEEP: "1" });
-    const opened = await before.get("agent.session_open")!({ request: opening(created.env) }, { paseo: {} });
-    expect(controller.bindNewAgent).toHaveBeenCalledWith("agent-1", "codex", "gpt-6.1-sol", null);
-    expect(opened.env).toEqual({ KEEP: "1", CODEX_HOME: "/profiles/work" });
+    const opened = await before.get("agent.session_open")!({ request: { ...opening(created.env), provider } }, { paseo: {} });
+    expect(controller.bindNewAgent).toHaveBeenCalledWith("agent-1", provider, provider === "cursor" ? null : "gpt-6.1-sol", null);
+    expect(opened.env).toEqual(provider === "codex" ? { KEEP: "1", CODEX_HOME: "/profiles/work" } : { KEEP: "1" });
     expect(opened.env).not.toHaveProperty("PASEO_ACCOUNT_SWITCHER_MODEL");
   });
   it("leaves other providers and agents without a chosen model unmarked", async () => {
@@ -115,7 +115,7 @@ describe("an account named when the agent is created", () => {
   it("refuses to create an agent of a provider whose accounts the plugin does not manage", async () => {
     const request = { ...opening({ PASEO_ACCOUNT_SWITCHER_ACCOUNT: "Second" }), provider: "opencode" };
     await expect(start().get("agent.session_open")!({ request }, { paseo: {} })).rejects.toThrow(SwitchRefusal);
-    await expect(start().get("agent.session_open")!({ request }, { paseo: {} })).rejects.toThrow("Account Switcher manages only Claude Code and Codex accounts, so the opencode agent cannot start on Second.");
+    await expect(start().get("agent.session_open")!({ request }, { paseo: {} })).rejects.toThrow("Account Switcher manages only Claude Code, Codex and Cursor accounts, so the opencode agent cannot start on Second.");
     expect(controller.bindNewAgent).not.toHaveBeenCalled();
   });
   it("lets a refused binding fail the creation with its reason", async () => {
@@ -147,6 +147,13 @@ describe("the profile a session's environment names", () => {
     const before = start();
     const opened = await before.get("agent.session_open")!({ request: opening({ CODEX_HOME: "/home/me/.codex" }, "resume") }, { paseo: {} });
     expect(opened.env).toEqual({ CODEX_HOME: "/profiles/work" });
+  });
+  it("keeps Cursor's original environment alongside the profile hint for usage", async () => {
+    controller.registry.accounts.push({ ...controller.registry.accounts[1], id:"cursor-work",provider:"cursor",home:"/profiles/cursor" });
+    controller.registry.bindings = [{ agentId:"agent-1",provider:"cursor",currentAccountId:"cursor-work",launchAccountId:"cursor-work" }];
+    controller.registry.integration.providers.push("cursor");
+    const opened = await start().get("agent.session_open")!({ request:{ ...opening({ XDG_CONFIG_HOME:"/normal-config" },"resume"),provider:"cursor" } }, { paseo:{} });
+    expect(opened.env).toMatchObject({ XDG_CONFIG_HOME:"/profiles/cursor",PASEO_CURSOR_ORIGINAL_ENV:JSON.stringify({XDG_CONFIG_HOME:"/normal-config"}) });
   });
   it("adds nothing for an agent on the system account, nor while integration is off", async () => {
     const before = start();
