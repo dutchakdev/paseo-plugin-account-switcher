@@ -66,7 +66,7 @@ export function createClientRuntime(client: PluginClientContext, icon: PluginBut
     }
     const current = state ? currentAccount(state, agent.id, provider) : undefined;
     const binding = state?.bindings.find((item) => item.agentId === agent.id);
-    const summary = provider === "cursor" ? current?.email ?? "Cursor" : usageSummary(usage.find((item) => item.accountId === current?.id));
+    const summary = usageSummary(usage.find((item) => item.accountId === current?.id));
     const label = !state ? "Account · loading…" : `${currentAccountName(state, agent.id, provider)} · ${summary}${binding?.pendingAccountId ? " →" : ""}${dataError ? " · error" : ""}`;
     const title = `${label}. Choose an account and view limits`;
     if (existing?.workspaceId === agent.workspaceId) { existing.registration.update({ title, label }); return; }

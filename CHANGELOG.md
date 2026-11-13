@@ -4,7 +4,7 @@
 
 ### Added
 
-- Cursor account switching on Linux and macOS, with browser sign-in, defaults for new chats, switching an idle chat without losing its session, and per-account usage in Accounts. Cursor appears in Accounts once it is set up in Paseo; disabling or removing it in Paseo leaves Claude and Codex switching on.
+- Cursor account switching on Linux and macOS, with browser sign-in, defaults for new chats, switching an idle chat without losing its session, and per-account usage in Accounts and the chat switcher. Cursor appears in Accounts once it is set up in Paseo; disabling or removing it in Paseo leaves Claude and Codex switching on.
 
 ### Changed
 

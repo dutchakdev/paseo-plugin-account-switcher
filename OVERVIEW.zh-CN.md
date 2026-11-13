@@ -27,14 +27,14 @@ Account Switcher 让你在 Paseo 中使用多个 Claude、ChatGPT/Codex 和 Curs
 
 - 插件读取每个账号已保存的登录信息：Codex 的 `auth.json`、Claude 存放在 macOS 钥匙串或配置文件 `.credentials.json` 中的凭据，以及 Cursor 的登录凭据。令牌不会发送给 Paseo 客户端；客户端会收到每个账号的邮箱、套餐和限制。
 - Claude 限制来自使用该账号访问令牌向 `api.anthropic.com` 发出的请求。当该令牌过期时（例如账号闲置），插件会以该账号运行 `claude -p /usage --no-session-persistence`，由官方 CLI 续期令牌，每 10 分钟最多一次。该命令不发送模型消息，也不保存会话。Codex 限制和套餐的模型列表来自官方 `codex app-server`，它会向 OpenAI 查询，并可能刷新账号令牌。Cursor 用量通过该账号的访问令牌向 `api2.cursor.sh` 请求。限制检查不会发送任何模型消息。
-- 为在 Paseo 的 Usage 视图中列出 Claude 和 Codex 账号，插件会以来源名称 Account Switcher 上报已收集的限制数据，不会产生新的提供商请求。在支持的平台上，会话环境提示让 Paseo 自带的用量弹窗读取所选账号。Cursor 用量显示在 Accounts 中。
+- 为在 Paseo 的 Usage 视图中列出 Claude 和 Codex 账号，插件会以来源名称 Account Switcher 上报已收集的限制数据，不会产生新的提供商请求。在支持的平台上，会话环境提示让 Paseo 自带的用量弹窗读取所选账号。Cursor 用量显示在 Accounts 和对话账号切换器中。
 - 插件发给智能体的唯一消息是 **Continue.**，仅在通过限制行完成切换之后，或在失败回合之后自动切换完成时发送。
 - 限制每 5 分钟刷新一次；Accounts 或切换器打开时每分钟刷新一次。缺失的值显示为无数据，刷新失败时可能保留上次的值并标记为过期。在主机设置中关闭 **Check usage** 时（Paseo 0.15 及更新版本），插件不发起额度请求，额度用尽时也不提供切换；Accounts 页面会说明这一点。
 - 移除托管账号会删除其配置文件和已保存的登录信息，在 macOS 上包括 Claude 账号的钥匙串项。共享的会话历史会保留。
 
 ## 限制
 
-- Cursor 支持依赖 Cursor CLI 的内部实现。CLI 更新后，在插件支持新版本之前，托管 Cursor 对话和登录可能被拒绝，或其中的工作区功能（如诊断）可能停止工作，少数情况下会使用另一个 Cursor 账号。macOS 上，托管 Cursor 账号无法使用 Paseo 的对话用量弹窗；可在 Accounts 中查看用量。
+- Cursor 支持依赖 Cursor CLI 的内部实现。CLI 更新后，在插件支持新版本之前，托管 Cursor 对话和登录可能被拒绝，或其中的工作区功能（如诊断）可能停止工作，少数情况下会使用另一个 Cursor 账号。macOS 上，托管 Cursor 账号无法使用 Paseo 的对话用量弹窗；可在 Accounts 或对话账号切换器中查看用量。
 - 如果可能降级，请在设置 Cursor 之前备份账号数据：不支持 Cursor 的版本无法读取包含 Cursor 记录的账号注册表。
 - **Apply** 通过 Paseo 重新加载智能体，而 Paseo 无法锁定同一时刻从另一个客户端发送的消息，该消息可能被中断。
 - Paseo 不会说明回合为何失败，并且会把因限制而停止的 Claude 回合报告为已完成，因此只有当插件在回合结束后重新读取的限制数据显示账号已用尽时，才会出现限制行。提供商未报告的限制不会触发该行，插件无法确认其账号的智能体也不会。该提供商的账号切换关闭时，不会给出任何切换建议。

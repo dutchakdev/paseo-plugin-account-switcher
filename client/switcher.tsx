@@ -70,7 +70,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
     </View> : null}
     {unconfirmed
       ? <Notice theme={theme} tone="warning">Account not confirmed. Choose an account below and apply it when the agent is idle.</Notice>
-      : provider === "cursor" ? <Text style={muted(theme)}>{current?.email ?? "Cursor usage limits are unavailable."}</Text> : provider ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
+      : provider ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
         onRefresh={current ? () => action.run(() => refresh({ accountId: current.id })) : undefined} refreshing={action.isPending} /> : null}
     {candidates.length ? <View style={{ gap: 6 }}>
       <Text style={{ ...muted(theme), fontWeight: "600" }}>Switch to</Text>
@@ -83,7 +83,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
           : account.authStatus === "error" ? "cannot access sign-in · check credentials in Accounts"
           : account.authStatus === "unknown" ? "sign-in not confirmed · check in Accounts"
           : !available ? "sign-in required · check in Accounts"
-          : account.provider === "cursor" ? account.email ?? "sign-in confirmed" : usageSummary(usage.data?.accounts.find((item) => item.accountId === account.id), now);
+          : usageSummary(usage.data?.accounts.find((item) => item.accountId === account.id), now);
         return <Pressable key={account.id} accessibilityRole="button" accessibilityLabel={`Prepare account ${account.label}`}
           accessibilityState={{ disabled: blocked, selected: prepared }} disabled={blocked}
           onPress={() => action.run(() => prepare({ agentId, accountId: account.id }))}
