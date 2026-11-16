@@ -1,7 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import * as rpc from "./shared/contracts";
 import { AccountController } from "./server/controller";
-import { AutoFailoverGuard, extraUsageLeft, failoverDecision, mayBeUsedUp } from "./server/failover";
+import { AutoFailoverGuard, extraUsageLeft, failoverDecision, mayBeUsedUp, nextResetAt } from "./server/failover";
 import type { PaseoApi } from "./server/paseo-api";
 import { registerPaseoUsage } from "./server/paseo-usage";
 import { profileEnv } from "./server/session-env";
@@ -31,6 +31,15 @@ export default function contribute(server:PluginServerContext){
  // An agent whose creation fails never gets that event, so entries expire.
  const startNotes=new Map<string,{note:AccountNote;at:number}>();
  const NOTE_TTL=600_000;
+ const guard=new AutoFailoverGuard();
+ // Offers and automatic rotations are scoped to a live plugin instance. A rotation visits each account once, then
+ // waits for a reset; a manual switch, cancellation, or setting change clears it.
+ const offered=new Set<string>();
+ const rotation=new Map<string,Set<string>>();
+ const waiting=new Map<string,{paseo:PaseoApi;provider:"claude"|"codex";model:string|null;fromId:string;row:FailoverRow}>();
+ const waitTimers=new Map<string,ReturnType<typeof setTimeout>>();
+ const switching=new Set<string>();
+ const clearRotation=(agentId:string)=>{rotation.delete(agentId);waiting.delete(agentId);const timer=waitTimers.get(agentId);if(timer){clearTimeout(timer);waitTimers.delete(agentId);}};
  server.handle(rpc.listAccounts,async(_,{paseo})=>controller.snapshot(paseo));
  server.handle(rpc.addAccount,async({provider,label},{paseo})=>{await controller.ensureRuntime(paseo);return controller.add(provider,label);});
  server.handle(rpc.renameAccount,async({accountId,label})=>{await controller.ready;return controller.store.change(r=>{const a=accountFrom(r,accountId);a.label=label;return rpc.AccountSchema.parse(a);});});
@@ -49,6 +58,7 @@ export default function contribute(server:PluginServerContext){
   const before=await controller.store.read().catch(()=>null);
   const binding=await controller.switcher(paseo).apply(agentId,accountId);
   if(binding.currentAccountId){
+   clearRotation(agentId);
    const to=binding.currentAccountId;
    void controller.usage.refresh(to).catch(()=>{});
    const switched=await note(agentId,async()=>{
@@ -61,12 +71,6 @@ export default function contribute(server:PluginServerContext){
   }
   return binding;
  });
- const guard=new AutoFailoverGuard();
- // Offers already in the chat, by agent, account and reset: one exhaustion gets one offered or "none" row, not one per
- // turn. A later exhaustion, with another reset or account, is offered again. In memory, like the guard.
- const offered=new Set<string>();
- // Agents with a failover switch under way, from its "switching" row until the row tells the outcome.
- const switching=new Set<string>();
  // Applies a failover row's switch the way `/account` does: the same service checks the account, that the agent is idle
  // and has no pending permission, and the launch receipt. The row, not a separate note, tells the outcome, and a failure
  // is shown there before it is rethrown: a refusal by its message, anything else as SWITCH_FAILED, its detail logged.
@@ -94,7 +98,73 @@ export default function contribute(server:PluginServerContext){
   // The switch stands even if the prompt is not delivered; the chat is idle on the new account either way.
   await paseo.agents.ref(agentId).send(CONTINUE).catch(error=>console.error(`Could not ask agent ${agentId} to continue on the new account: ${reason(error)}`));
  };
- server.handle(rpc.setAutoFailover,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.autoFailover[provider]=enabled;});return{};});
+ const scheduleWait=(paseo:PaseoApi,agentId:string,provider:"claude"|"codex",model:string|null,fromId:string,row:FailoverRow,at:string|null)=>{
+  const previous=waitTimers.get(agentId);if(previous)clearTimeout(previous);
+  waiting.set(agentId,{paseo,provider,model,fromId,row});
+  if(!at)return;
+  const delay=Math.min(2_147_000_000,Math.max(1_000,Date.parse(at)-Date.now()+1_000));
+  const timer=setTimeout(()=>{void resumeWait(agentId);},delay);timer.unref?.();waitTimers.set(agentId,timer);
+ };
+ async function resumeWait(agentId:string){
+  const pending=waiting.get(agentId);if(!pending)return;
+  waiting.delete(agentId);waitTimers.delete(agentId);
+  const {paseo,provider,model,fromId,row}=pending;
+  try{
+   await controller.ready;
+   const state=await controller.store.read();
+   if(!state.autoFailover[provider]||!state.integration.enabled||!state.integration.providers.includes(provider)){clearRotation(agentId);return;}
+   const current=await controller.accountOf(paseo,agentId,provider,state);
+   if(current!==fromId){clearRotation(agentId);return;}
+   if(!await controller.usage.checksEnabled()){clearRotation(agentId);return;}
+   let usage:Awaited<ReturnType<typeof controller.usage.refresh>>;
+   try{usage=await controller.usage.refresh();}
+   catch(error){
+    console.error(`Could not refresh limits before resuming agent ${agentId}: ${reason(error)}`);
+    const retry=new Date(Date.now()+60_000).toISOString();
+    scheduleWait(paseo,agentId,provider,model,fromId,row,retry);
+    return;
+   }
+   const currentUsage=usage.find(item=>item.accountId===fromId);
+   if(!currentUsage||currentUsage.status!=="ok"){
+    const retry=new Date(Date.now()+60_000).toISOString();
+    scheduleWait(paseo,agentId,provider,model,fromId,row,retry);
+    return;
+   }
+   const latest=await controller.store.read(),now=Date.now();
+   const evidence={currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider),usage,model,now,excludedIds:new Set<string>()};
+   const decision=failoverDecision(evidence);
+   if(!decision){
+    // The account that failed can be the first one to reset. Continue on it without a reload; a reload to the same
+    // profile would create a needless provider session and can race a user's next message.
+    if(!mayBeUsedUp(currentUsage,now)){
+     clearRotation(agentId);
+     await appendFailoverRow(paseo,agentId,{...row,state:"resumed",to:row.from,toId:fromId,waitsUntil:null});
+     if(row.resumes!==false)await paseo.agents.ref(agentId).send(CONTINUE).catch(error=>console.error(`Could not ask agent ${agentId} to continue after its quota reset: ${reason(error)}`));
+     return;
+    }
+    const next=nextResetAt(evidence.accounts,usage,now);
+    if(next){
+     scheduleWait(paseo,agentId,provider,model,fromId,{...row,state:"waiting",waitsUntil:next},next);
+     await appendFailoverRow(paseo,agentId,{...row,state:"waiting",waitsUntil:next});
+    }else{
+     clearRotation(agentId);
+     await appendFailoverRow(paseo,agentId,{...row,state:"none",waitsUntil:null});
+    }
+    return;
+   }
+   if(decision.kind!=="offer"){
+    const next=nextResetAt(evidence.accounts,usage,now);
+    if(next){scheduleWait(paseo,agentId,provider,model,fromId,{...row,state:"waiting",waitsUntil:next},next);await appendFailoverRow(paseo,agentId,{...row,state:"waiting",waitsUntil:next});}
+    else {clearRotation(agentId);await appendFailoverRow(paseo,agentId,{...row,state:"none",waitsUntil:null});}
+    return;
+   }
+   const target=latest.accounts.find(account=>account.id===decision.toId);if(!target)return;
+   const visited=rotation.get(agentId)??new Set<string>();visited.add(fromId);visited.add(target.id);rotation.set(agentId,visited);
+   guard.record(agentId,row.rowId,fromId,target.id,now);
+   void switchOver(paseo,agentId,{...row,state:"waiting",to:target.label,toId:target.id,waitsUntil:null},target.id,"auto").catch(error=>{if(error instanceof SwitchRefusal)console.error(`Could not resume agent ${agentId} after a quota reset: ${error.message}`);});
+  }catch(error){console.error(`Could not resume agent ${agentId} after a quota reset: ${reason(error)}`);}
+ }
+ server.handle(rpc.setAutoFailover,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.autoFailover[provider]=enabled;});if(!enabled)for(const agentId of [...rotation.keys(),...waiting.keys()])clearRotation(agentId);return{};});
  server.handle(rpc.applyFailover,async({agentId,accountId,rowId,fromId},{paseo})=>{
   // Only refusals, written for the user, reach the client as they are; any other error may carry paths or internals.
   // switchOver logs its own failures; one before it is logged here.
@@ -123,9 +193,10 @@ export default function contribute(server:PluginServerContext){
   }catch(error){throw shown(error,false);}
   try{await switchOver(paseo,agentId,row,toId,"switched");}
   catch(error){throw shown(error,true);}
+  clearRotation(agentId);
   return{};
  });
- server.handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
+ server.handle(rpc.setIntegration,async({enabled},{paseo})=>{const result=await controller.integration(paseo,enabled);if(!enabled)for(const agentId of [...rotation.keys(),...waiting.keys()])clearRotation(agentId);return result;});
  server.handle(rpc.listUsage,async({visible},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.list({visible}),checksOff:!await controller.usage.checksEnabled()};});
  server.handle(rpc.refreshUsage,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.refresh(accountId),checksOff:!await controller.usage.checksEnabled()};});
  // Paseo's Usage view lists the managed accounts too; a daemon before 0.11 has no usage sources, and the Accounts screen still shows the same limits.
@@ -169,6 +240,9 @@ export default function contribute(server:PluginServerContext){
  const removeTurnEnded=server.on("agent.turn_ended",async({agent,turnId,outcome},{paseo})=>{
   const provider=agent.provider;
   if(provider!=="claude"&&provider!=="codex")return;
+  // A normal turn or an explicit cancellation starts a fresh quota rotation. A failed Codex turn and a completed
+  // Claude turn are the two signals that can continue the current automatic run.
+  if(outcome.kind==="canceled"||(provider==="codex"&&outcome.kind==="completed")){clearRotation(agent.id);return;}
   const completed=provider==="claude"&&outcome.kind==="completed";
   if(outcome.kind!=="failed"&&!completed)return;
   const rowId=`${FAILOVER_KIND}-${agent.id}-${turnId??Date.now()}`;
@@ -179,34 +253,49 @@ export default function contribute(server:PluginServerContext){
    await controller.ready;
    const state=await controller.store.read();
    // Without that provider's launcher the CLI runs on the system login, so a switch could not take effect.
-   if(!state.integration.enabled||!state.integration.providers.includes(provider)||settled(state))return;
+   if(!state.integration.enabled||!state.integration.providers.includes(provider)||settled(state)){if(!settled(state))clearRotation(agent.id);return;}
    // With the host's usage checks off nothing can read the account again, and an old reading is no proof that it ran out.
-   if(!await controller.usage.checksEnabled())return;
+   if(!await controller.usage.checksEnabled()){clearRotation(agent.id);return;}
    // An agent started with no app open may have a launch nothing has confirmed yet; its receipt confirms it now.
    const fromId=await controller.accountOf(paseo,agent.id,provider,state),from=labelOf(state,fromId);
    if(!fromId||!from)return;
    // The cache costs no provider request, so an ordinary completed turn ends here.
-   if(completed&&!mayBeUsedUp((await controller.usage.list()).find(item=>item.accountId===fromId),Date.now()))return;
+   if(completed&&!mayBeUsedUp((await controller.usage.list()).find(item=>item.accountId===fromId),Date.now())){clearRotation(agent.id);return;}
    // A full window read earlier still counts until its reset, so the account is read again before deciding.
    const [usage,snapshot]=await Promise.all([controller.usage.refresh(fromId),paseo.agents.ref(agent.id).refresh().catch(()=>null)]);
-   if(completed&&extraUsageLeft(usage.find(item=>item.accountId===fromId)))return;
+   if(completed&&extraUsageLeft(usage.find(item=>item.accountId===fromId))){clearRotation(agent.id);return;}
    // A switch may have started or finished during those reads; from here to the row nothing awaits.
    const latest=await controller.store.read();
    if(settled(latest)||boundAccount(latest,agent.id,provider)!==fromId)return;
    const model=snapshot?.agent.runtimeInfo?.model||snapshot?.agent.model||null,now=Date.now();
-   const decision=failoverDecision({currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider),usage,model,now});
-   if(!decision)return;
+   const visited=rotation.get(agent.id)??new Set<string>();visited.add(fromId);rotation.set(agent.id,visited);
+   const accounts=latest.accounts.filter(a=>a.provider===provider);
+   const decision=failoverDecision({currentId:fromId,accounts,usage,model,now,excludedIds:visited});
+   if(!decision){clearRotation(agent.id);return;}
    const offer=decision.kind==="offer"?latest.accounts.find(a=>a.id===decision.toId):undefined;
    const row:FailoverRow={rowId,state:offer?"offered":"none",from,fromId,to:offer?.label??null,toId:offer?.id??null,resetsAt:decision.resetsAt,error:null};
    if(row.toId&&latest.autoFailover[provider]&&guard.allow(agent.id,rowId,fromId,row.toId,now)){
     // Recorded before the first await of the switch: the guard's check and record must not be split.
-    guard.record(agent.id,rowId,fromId,row.toId,now);
+    guard.record(agent.id,rowId,fromId,row.toId,now);visited.add(row.toId);
     // The switch reloads the agent and waits for its launch, longer than Paseo waits for a hook; the row reports it.
     // A completed turn may have finished its work, so that switch does not ask the agent to continue.
     // switchOver logged any failure but a refusal already.
     void switchOver(paseo,agent.id,completed?{...row,resumes:false}:row,row.toId,"auto").catch(error=>{if(error instanceof SwitchRefusal)console.error(`Could not switch agent ${agent.id} automatically: ${error.message}`);});
     return;
    }
+   if(latest.autoFailover[provider]&&!row.toId){
+    const next=nextResetAt(accounts,usage,now);
+    if(next){
+     const key=JSON.stringify([agent.id,fromId,next]);
+     if(waiting.has(agent.id)||offered.has(key))return;
+     offered.add(key);
+     const waitingRow:FailoverRow={...row,...(completed?{resumes:false}:{}),state:"waiting",waitsUntil:next};
+     scheduleWait(paseo,agent.id,provider,model,fromId,waitingRow,next);
+     await appendFailoverRow(paseo,agent.id,waitingRow);
+     return;
+    }
+   }
+   if(!row.toId)clearRotation(agent.id);
    // Recorded before the await, so a turn reported meanwhile finds it.
    const key=JSON.stringify([agent.id,fromId,row.resetsAt]);
    if(offered.has(key))return;
@@ -214,5 +303,5 @@ export default function contribute(server:PluginServerContext){
    await appendFailoverRow(paseo,agent.id,row);
   }catch(error){console.error(`Could not check whether agent ${agent.id} ran out of its account's limit: ${reason(error)}`);}
  });
- return async()=>{removeCreate();removeHook();removeCreated();removeTurnEnded();startNotes.clear();await controller.close();};
+ return async()=>{removeCreate();removeHook();removeCreated();removeTurnEnded();startNotes.clear();for(const timer of waitTimers.values())clearTimeout(timer);waitTimers.clear();waiting.clear();rotation.clear();await controller.close();};
 }

@@ -62,7 +62,7 @@ export function AutoFailoverSetting({ theme, provider, enabled, disabled, run }:
 }) {
   const save = useRpc(setAutoFailover);
   return <SettingsSelect label="When a limit runs out during a chat" value={enabled ? "auto" : "offer"} disabled={disabled}
-    hint={enabled ? "Switches within this provider, up to 3 times per hour. Failed turns continue automatically." : "The chat offers another signed-in account."}
+    hint={enabled ? "Uses every signed-in account with room, waits for the next reset when all are used up, and continues automatically." : "The chat offers another signed-in account."}
     onValueChange={value => run(() => save({ provider, enabled: value === "auto" }))}
     options={[{ value: "offer", label: "Offer a switch" }, { value: "auto", label: "Switch automatically" }]} />;
 }

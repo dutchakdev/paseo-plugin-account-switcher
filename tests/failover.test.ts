@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AutoFailoverGuard, extraUsageLeft, failoverDecision, mayBeUsedUp } from "../server/failover";
+import { AutoFailoverGuard, extraUsageLeft, failoverDecision, mayBeUsedUp, nextResetAt } from "../server/failover";
 import type { UsageSnapshot, UsageWindow } from "../shared/contracts";
 
 const now = Date.parse("2026-10-27T12:00:00Z");
@@ -21,6 +21,14 @@ describe("whether a failed turn ran out of its account's limit", () => {
   it("offers the spare with the most room when the current account is used up", () => {
     const usage = [snapshot("current", [window(100)]), ...spares];
     expect(decide({ accounts, usage })).toEqual({ kind: "offer", fromId: "current", toId: "roomy", resetsAt: later });
+  });
+  it("skips accounts already visited by the current automatic rotation", () => {
+    const usage = [snapshot("current", [window(100)]), snapshot("roomy", [window(100)]), snapshot("tight", [window(80)])];
+    expect(decide({ accounts: [ready("current"), ready("roomy"), ready("tight")], usage, excludedIds: new Set(["roomy"]) })).toMatchObject({ kind: "offer", toId: "tight" });
+  });
+  it("selects the next account reset across the provider", () => {
+    const fiveHours = "2026-10-27T17:00:00Z";
+    expect(nextResetAt([ready("current"), ready("roomy")], [snapshot("current", [window(100, later)]), snapshot("roomy", [window(100, fiveHours)])], now)).toBe(later);
   });
   it("offers an account whose room is unknown when it is the only spare", () => {
     const usage = [snapshot("current", [window(100)]), snapshot("unknown", [window(null)])];
@@ -135,29 +143,13 @@ describe("when the plugin may switch an agent on its own", () => {
     expect(guard.allow("agent", "turn-1", "b", "c", t0 + minute)).toBe(false);
     expect(guard.allow("agent", "turn-2", "b", "c", t0 + minute)).toBe(true);
   });
-  it("allows three switches an hour, rolling", () => {
+  it("allows every account in a rotation instead of imposing an hourly cap", () => {
     const guard = new AutoFailoverGuard();
     guard.record("agent", "t1", "a", "b", t0);
     guard.record("agent", "t2", "b", "c", t0 + 10 * minute);
     guard.record("agent", "t3", "c", "d", t0 + 20 * minute);
-    expect(guard.allow("agent", "t4", "d", "e", t0 + 30 * minute)).toBe(false);
-    // The oldest switch drops out of the hour; the other two still count.
-    expect(guard.allow("agent", "t4", "d", "e", t0 + hour)).toBe(true);
-    guard.record("agent", "t4", "d", "e", t0 + hour);
-    expect(guard.allow("agent", "t5", "e", "f", t0 + hour + minute)).toBe(false);
-  });
-  it("never switches to an account the agent left within the hour", () => {
-    const guard = new AutoFailoverGuard();
-    guard.record("agent", "t1", "a", "b", t0);
-    expect(guard.allow("agent", "t2", "b", "a", t0 + 10 * minute)).toBe(false);
-    expect(guard.allow("agent", "t2", "b", "c", t0 + 10 * minute)).toBe(true);
-    expect(guard.allow("agent", "t2", "b", "a", t0 + 61 * minute)).toBe(true);
-  });
-  it("counts the hour from the switch, not from when it is asked", () => {
-    const guard = new AutoFailoverGuard();
-    guard.record("agent", "t1", "a", "b", t0);
-    expect(guard.allow("agent", "t2", "b", "a", t0 + hour - 1)).toBe(false);
-    expect(guard.allow("agent", "t2", "b", "a", t0 + hour)).toBe(true);
+    expect(guard.allow("agent", "t4", "d", "e", t0 + 30 * minute)).toBe(true);
+    expect(guard.allow("agent", "t5", "e", "f", t0 + hour + minute)).toBe(true);
   });
   it("keeps each agent's record apart", () => {
     const guard = new AutoFailoverGuard();
@@ -172,13 +164,13 @@ describe("when the plugin may switch an agent on its own", () => {
     expect(guard.allow("agent", "t1", "a", "b", t0)).toBe(true);
     expect(guard.allow("agent", "t1", "a", "b", t0)).toBe(true);
   });
-  it("tells whether a turn already had its automatic switch, for that agent and within the hour", () => {
+  it("tells whether a turn already had its automatic switch", () => {
     const guard = new AutoFailoverGuard();
     expect(guard.hasTurn("agent", "t1", t0)).toBe(false);
     guard.record("agent", "t1", "a", "b", t0);
     expect(guard.hasTurn("agent", "t1", t0 + minute)).toBe(true);
     expect(guard.hasTurn("agent", "t2", t0 + minute)).toBe(false);
     expect(guard.hasTurn("other", "t1", t0 + minute)).toBe(false);
-    expect(guard.hasTurn("agent", "t1", t0 + hour)).toBe(false);
+    expect(guard.hasTurn("agent", "t1", t0 + hour)).toBe(true);
   });
 });

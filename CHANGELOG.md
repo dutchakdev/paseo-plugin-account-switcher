@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Automatic failover can rotate through every signed-in account with room, wait for the next known reset when all accounts are exhausted, and resume the agent after the reset. The previous hourly switch cap is removed.
+
 ## 0.10.2 - 2026-11-07
 
 ### Fixed

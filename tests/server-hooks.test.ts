@@ -281,7 +281,7 @@ describe("a turn that fails on a used-up account", () => {
   const rows = (appended: { item: any }[]) => appended.filter(entry => entry.item.kind === "account-failover").map(entry => entry.item);
   const busy = "Wait for the agent to finish its response.";
 
-  beforeEach(() => { readings(reading("work", 100), reading("second", 10)); cached(); });
+  beforeEach(() => { readings(reading("work", 100), reading("second", 10)); cached(); controller.refresh.mockClear(); controller.list.mockClear(); });
   afterEach(() => {
     Object.assign(controller.registry, structuredClone(saved));
     controller.read.mockImplementation(async () => controller.registry);
@@ -312,6 +312,63 @@ describe("a turn that fails on a used-up account", () => {
     const { on } = startAll(), { appended, paseo } = paseoRecorder();
     await on.get("agent.turn_ended")!(ended(), { paseo });
     expect(rows(appended)).toEqual([expect.objectContaining({ data: expect.objectContaining({ state: "none", from: "Work", to: null, toId: null, resetsAt }) })]);
+  });
+  it("waits for the next reset and resumes the run automatically", async () => {
+    controller.registry.autoFailover.codex = true;
+    const laterReset = new Date(Date.parse(resetsAt) + 3 * 3_600_000).toISOString();
+    const work = reading("work", 100); work.windows = [{ ...work.windows[0], resetsAt: laterReset }];
+    const system = reading("system-codex", 100); system.windows = [{ ...system.windows[0], resetsAt: laterReset }];
+    readings(work, reading("second", 100), system);
+    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
+    vi.useFakeTimers();
+    try {
+      await on.get("agent.turn_ended")!(ended(), { paseo });
+      expect(rows(appended).at(-1)?.data).toMatchObject({ state: "waiting", to: null, waitsUntil: expect.any(String) });
+      readings(work, reading("second", 0), system);
+      await vi.advanceTimersByTimeAsync(3 * 3_600_000 + 5_000);
+      await vi.waitFor(() => expect(sent).toEqual([{ agentId: "agent-1", text: "Continue." }]));
+      expect(rows(appended).map(item => item.data.state)).toEqual(["waiting", "switching", "auto"]);
+      expect(controller.switchTo).toHaveBeenCalledWith("agent-1", "second");
+    } finally { vi.useRealTimers(); }
+  });
+  it("does not continue automatically after a completed Claude turn that waits for a reset", async () => {
+    onClaude();
+    controller.registry.autoFailover.claude = true;
+    const laterReset = new Date(Date.parse(resetsAt) + 3 * 3_600_000).toISOString();
+    const work = claudeReading("claude-work", undefined, laterReset);
+    const system = claudeReading("system-claude", undefined, laterReset);
+    cached(work);
+    readings(work, claudeReading("claude-second", undefined, resetsAt), system);
+    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
+    vi.useFakeTimers();
+    try {
+      await on.get("agent.turn_ended")!(claudeCompleted(), { paseo });
+      expect(rows(appended).at(-1)?.data).toMatchObject({ state: "waiting", resumes: false });
+      readings(work, reading("claude-second", 10, "claude"), system);
+      await vi.advanceTimersByTimeAsync(3 * 3_600_000 + 5_000);
+      await vi.waitFor(() => expect(rows(appended).at(-1)?.data.state).toBe("auto"));
+      expect(sent).toEqual([]);
+      expect(controller.switchTo).toHaveBeenCalledWith("agent-1", "claude-second");
+    } finally { vi.useRealTimers(); }
+  });
+  it("keeps waiting when the reset refresh fails", async () => {
+    controller.registry.autoFailover.codex = true;
+    const laterReset = new Date(Date.parse(resetsAt) + 3 * 3_600_000).toISOString();
+    const work = reading("work", 100); work.windows = [{ ...work.windows[0], resetsAt: laterReset }];
+    const system = reading("system-codex", 100); system.windows = [{ ...system.windows[0], resetsAt: laterReset }];
+    readings(work, reading("second", 100), system);
+    const { on } = startAll(), { appended, sent, paseo } = paseoRecorder();
+    vi.useFakeTimers();
+    try {
+      await on.get("agent.turn_ended")!(ended(), { paseo });
+      controller.refresh.mockRejectedValueOnce(new Error("temporary usage failure"));
+      readings(work, reading("second", 0), system);
+      await vi.advanceTimersByTimeAsync(3 * 3_600_000 + 5_000);
+      expect(sent).toEqual([]);
+      await vi.advanceTimersByTimeAsync(60_000 + 5_000);
+      await vi.waitFor(() => expect(sent).toEqual([{ agentId: "agent-1", text: "Continue." }]));
+      expect(rows(appended).at(-1)?.data.state).toBe("auto");
+    } finally { vi.useRealTimers(); }
   });
   it("treats an agent without a binding as running on its provider's Current CLI account", async () => {
     controller.registry.bindings = [];
@@ -506,7 +563,7 @@ describe("a turn that fails on a used-up account", () => {
       expect(sent).toEqual([]);
     } finally { error.mockRestore(); }
   });
-  it("stops switching automatically after three switches of one agent within the hour", async () => {
+  it("keeps switching through every exhausted account without an hourly cap", async () => {
     controller.registry.autoFailover.codex = true;
     const { on } = startAll(), { appended, paseo } = paseoRecorder();
     for (const turnId of ["t1", "t2", "t3", "t4"]) {
@@ -519,8 +576,8 @@ describe("a turn that fails on a used-up account", () => {
       // Each switch settles before the next turn fails; one still under way would stop the next on its own.
       await vi.waitFor(() => expect(rows(appended).at(-1).data.state).toMatch(/^(auto|offered)$/));
     }
-    expect(controller.apply).toHaveBeenCalledTimes(3);
-    expect(rows(appended).filter(item => item.id === "account-failover-agent-1-t4").map(item => item.data.state)).toEqual(["offered"]);
+    expect(controller.apply).toHaveBeenCalledTimes(4);
+    expect(rows(appended).filter(item => item.id === "account-failover-agent-1-t4").map(item => item.data.state)).toEqual(["switching", "auto"]);
   });
 
   it("leaves an unresolved automatic switch alone when the turn is reported again, with or without its id", async () => {

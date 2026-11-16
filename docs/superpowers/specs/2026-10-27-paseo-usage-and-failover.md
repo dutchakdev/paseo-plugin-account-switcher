@@ -1,5 +1,7 @@
 # Paseo usage, failover on an exhausted limit, and the screen API
 
+> Historical design note: the current implementation extends automatic failover beyond this original spec. It rotates through every eligible account, waits for the next known reset when all accounts are exhausted, and no longer applies the three-switch-per-hour cap. See [architecture](../../architecture.md) for the current behavior.
+
 Status: design, 2026-10-27. Scope approved by the owner: Paseo's usage UI shows
 every account and the right one per agent; a chat offer to switch when a turn
 fails on an exhausted limit, automatic only as an opt-in; screens on the current

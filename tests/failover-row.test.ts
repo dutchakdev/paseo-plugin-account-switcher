@@ -18,6 +18,10 @@ describe("the failover row in the chat", () => {
   it("adds that no other account has room when there is nothing to offer", () => {
     expect(failoverText(row({ state: "none", to: null, toId: null }), at)).toBe("Work's limit is used up until 18:00. No other account has room.");
   });
+  it("shows a scheduled reset while automatic failover is waiting", () => {
+    expect(failoverText(row({ state: "waiting", to: null, toId: null, waitsUntil: "2026-10-27T18:00:00Z" }), at)).toBe("Work's limit is used up until 18:00. All accounts are used up; waiting for the next reset at 18:00.");
+    expect(failoverText(row({ state: "resumed", to: "Work", toId: "work" }), at)).toBe("The limit on Work reset. Continuing on Work.");
+  });
   it("leaves the time out when the provider gave none", () => {
     expect(failoverText(row({ resetsAt: null }), at)).toBe("Work's limit is used up.");
   });
@@ -39,11 +43,11 @@ describe("the failover row in the chat", () => {
   });
   it("offers the button only while the switch is on offer", () => {
     expect(failoverAction(row())).toEqual({ label: "Switch to Second and continue", accountId: "second" });
-    for (const state of ["none", "switching", "switched", "auto", "failed"] as const) expect(failoverAction(row({ state }))).toBeNull();
+    for (const state of ["none", "waiting", "switching", "switched", "auto", "resumed", "failed"] as const) expect(failoverAction(row({ state }))).toBeNull();
     expect(failoverAction(row({ to: null, toId: null }))).toBeNull();
   });
   it("round-trips through JSON and its own schema", () => {
-    for (const state of ["offered", "none", "switching", "switched", "auto", "failed"] as const) {
+    for (const state of ["offered", "none", "waiting", "switching", "switched", "auto", "resumed", "failed"] as const) {
       const value = row({ state, error: state === "failed" ? "busy" : null });
       expect(FailoverRowSchema.parse(JSON.parse(JSON.stringify(value)))).toEqual(value);
     }

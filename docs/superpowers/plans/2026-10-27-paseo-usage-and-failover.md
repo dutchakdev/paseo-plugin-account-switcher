@@ -1,5 +1,7 @@
 # Paseo usage, failover and screen API — Implementation Plan
 
+> Historical plan: automatic failover was later extended to rotate through every eligible account and wait for known resets. The current behavior is documented in [architecture](../../architecture.md); the original hourly guard described below is no longer used.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Paseo's own usage UI shows every account and each agent's real one; a failed turn on an exhausted limit offers a switch (automatic only as an opt-in); screens use the current API with the deprecated one as fallback.
