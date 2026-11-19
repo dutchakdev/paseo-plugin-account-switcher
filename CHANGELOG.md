@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- An agent no longer exits at once in a project that pins an old Node through mise, asdf or nvm (#58). The launchers began with `#!/usr/bin/env node` and took the first `node` on the agent's PATH, which could be too old to parse them. Each launcher is now a short shell script that runs the launcher bundle with the Node that runs the plugin; the provider CLI and its tools still see the project's PATH.
+- A managed account whose sign-in was lost can sign in again while agents use it (#55). Before, any bound agent blocked the sign-in, and the dialog said only "Could not start account sign-in". The sign-in is refused only while a switch involving the account runs or while its sign-in still works, and the dialog says which. A new sign-in is held to the identity the agents ran on: one with another identity is signed out again, so agents never move to someone else's subscription.
+
+### Changed
+
+- Paseo 0.16 and 0.17 checked: the plugin typechecks and passes its tests against their SDKs. Paseo 0.17 holds a message from an agent until the turn ends; the plugin sends its "Continue." only to an idle chat, so nothing changes.
+- Development toolchain updated (Vite, Vitest, TanStack Query, semver).
+
 ## 0.10.2 - 2026-11-07
 
 ### Fixed

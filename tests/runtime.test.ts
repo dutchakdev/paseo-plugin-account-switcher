@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, open, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { PaseoApi } from "@getpaseo/client";
 import { AccountStore } from "../server/store";
 import { accountCommand, accountEnvironment, launchLogin, probeAccount, removeAccountCredentials } from "../server/auth";
-import { installIntegration, launcherPath, prepareRuntime, reconcileIntegration, restoreIntegration, writeLaunchers } from "../server/integration";
+import { installIntegration, launcherPath, launcherScriptPath, launcherWrapper, prepareRuntime, reconcileIntegration, restoreIntegration, writeLaunchers } from "../server/integration";
 
 const roots: string[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -27,7 +27,7 @@ if (args.includes('status')) {
 } else if(args.includes('--wait')) {
  process.on('SIGTERM',()=>{console.log('terminated');process.exit(23)}); console.log('ready'); setInterval(()=>{},1000);
 } else {
- console.log(JSON.stringify({args,home:process.env.CODEX_HOME,claudeHome:process.env.CLAUDE_CONFIG_DIR,key:process.env.OPENAI_API_KEY,custom:process.env.CUSTOM}));
+ console.log(JSON.stringify({args,home:process.env.CODEX_HOME,claudeHome:process.env.CLAUDE_CONFIG_DIR,key:process.env.OPENAI_API_KEY,custom:process.env.CUSTOM,electron:process.env.ELECTRON_RUN_AS_NODE??null,marker:process.env.ACCOUNT_SWITCHER_ELECTRON??null}));
  process.stdin.pipe(process.stdout);
 }
 `);
@@ -45,6 +45,30 @@ async function run(command: string, args: string[], env: NodeJS.ProcessEnv, inpu
 }
 
 describe("standalone native-provider launcher", () => {
+  it("runs on the plugin's Node even when the agent's PATH starts with an old one (#58)", async () => {
+    const { root, store } = await fixture(); await writeLaunchers(store);
+    // What a project's mise or nvm shim puts first: a Node 12 that cannot parse the node22 bundle.
+    const shims = join(root, "pinned node 12"); await mkdir(shims);
+    await writeFile(join(shims, "node"), "#!/bin/sh\necho \"SyntaxError: Unexpected token '.'\" >&2\nexit 1\n", { mode: 0o755 });
+    const result = await run(launcherPath(root, "codex"), ["--version"], { ...process.env, PATH: `${shims}${delimiter}${process.env.PATH ?? ""}` });
+    expect(result.stderr).toBe(""); expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ args: ["--version"] });
+  });
+
+  it("quotes the paths it writes into the wrapper, and passes arguments through untouched", async () => {
+    const script = launcherWrapper("/opt/it's node/bin/node", "/root/bin/launcher.js", "claude", false);
+    expect(script).toBe("#!/bin/sh\n# Account Switcher claude launcher, written by the plugin at every start. Do not edit.\nexec '/opt/it'\\''s node/bin/node' '/root/bin/launcher.js' claude \"$@\"\n");
+  });
+
+  it("runs Electron as Node for the launcher only, never for the provider CLI", async () => {
+    const { root, store } = await fixture(); await writeLaunchers(store);
+    // The wrapper a desktop-managed daemon writes; plain Node ignores the variable, so the test can run it.
+    await writeFile(launcherPath(root, "codex"), launcherWrapper(process.execPath, launcherScriptPath(root), "codex", true), { mode: 0o700 });
+    const result = await run(launcherPath(root, "codex"), ["--version"], process.env);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ electron: null, marker: null });
+  });
+
   it("selects the bound profile, shares history, preserves argv/stdin, and writes a correlated receipt", async () => {
     const { root, store } = await fixture(); const account = await store.add("codex", "Work");
     await mkdir(account.home, { recursive: true });

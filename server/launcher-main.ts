@@ -12,14 +12,17 @@ async function finishLogin(exitCode: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const executable = resolve(process.argv[1]), root = dirname(dirname(executable));
-  const provider = basename(executable) === "claude-launcher" ? "claude" : basename(executable) === "codex-launcher" ? "codex" : null;
+  // bin/<provider>-launcher, a shell script, runs this bundle (bin/launcher.js) and names the provider first.
+  const executable = resolve(process.argv[1]), root = dirname(dirname(executable)), named = process.argv[2];
+  const provider = basename(executable) === "launcher.js" && (named === "claude" || named === "codex") ? named : null;
   if (!provider) throw new LauncherError("Unknown account launcher.");
   let registry;
   try { registry = await readRegistry(root); } catch { throw new LauncherError("Account registry is missing or corrupt; launch refused."); }
   const command = registry.commands[provider];
   if (!command?.[0] || !isAbsolute(command[0]) || [join(root, "bin", "claude-launcher"), join(root, "bin", "codex-launcher")].includes(resolve(command[0]))) throw new LauncherError("Original provider command is unavailable; launch refused.");
-  let args = process.argv.slice(2), env = { ...process.env };
+  let args = process.argv.slice(3), env = { ...process.env };
+  // Set by the wrapper only to run Paseo's Electron as Node; the provider CLI must not inherit it.
+  if (env.ACCOUNT_SWITCHER_ELECTRON) { delete env.ELECTRON_RUN_AS_NODE; delete env.ACCOUNT_SWITCHER_ELECTRON; }
   const login = args[0] === "--account-switcher-login", agentId = env.PASEO_AGENT_ID;
   const binding = agentId ? registry.bindings.find(candidate => candidate.agentId === agentId && candidate.provider === provider) : undefined;
   const accountId = login ? args[1] : binding?.launchAccountId ?? binding?.currentAccountId;
