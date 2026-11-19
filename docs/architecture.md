@@ -28,7 +28,7 @@ flowchart LR
 - `client/screens.ts` registers the Accounts screen. It uses `addScreen` and, for the sidebar row, `addSidebarHeaderItem` with the host's `SidebarRow`; when the app lacks either, it uses the deprecated `addSurface` or `addSidebarItem` for that part. Each choice is a feature check on the app object, not a version comparison. The Command Center item opens the screen with `openScreen`, or `openSurface` on an app without it. Both paths show the same component.
 - `index.server.ts` and `server/controller.ts` register RPCs, agent lifecycle hooks (`agent.create`, `agent.session_open`, `agent.created`, `agent.turn_ended`), and the usage source. The controller owns profiles, login reservations, switching, integration, and monitoring.
 - `shared/contracts.ts` defines validated RPC inputs, outputs, and public state. It does not import client or server runtime code.
-- `server/launcher-main.ts` is bundled into a standalone Node launcher by `npm run build`. The generated `server/launcher-artifact.ts` is a build output, not a file to edit.
+- `server/launcher-main.ts` is bundled into a standalone Node launcher by `npm run build`. The generated `server/launcher-artifact.ts` is a build output, not a file to edit. At every start the plugin writes the bundle to `bin/launcher.js` and one shell script per provider, `bin/claude-launcher` and `bin/codex-launcher`, which runs the bundle with the plugin's own Node (`process.execPath`, with `ELECTRON_RUN_AS_NODE` under the desktop app) and names the provider. A `node` that a project pins on PATH never runs the launcher.
 
 Plugins run with the daemon user's permissions. An account profile separates authentication; it is not an operating-system sandbox. Settings and session data are intentionally shared.
 

@@ -13,8 +13,30 @@ const providers = ["claude", "codex"] as const;
 const COMMAND_DRIFT = "Provider commands changed outside the plugin. Enable integration again to apply accounts.";
 export const NO_PROVIDER_CLI = "Provider CLI not found. Install Claude Code or Codex, or configure its command in Paseo.";
 export const launcherPath = (root: string, provider: Provider): string => join(root, "bin", `${provider}-launcher`);
+/** The launcher bundle that every provider's launcher runs. */
+export const launcherScriptPath = (root: string): string => join(root, "bin", "launcher.js");
+
+const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * A provider's launcher: a shell script that runs the bundle with the Node that runs this plugin, and names the
+ * provider. The bundle used to be the launcher itself, behind `#!/usr/bin/env node`, which takes the first `node` on the
+ * agent's PATH; a project that pins an old Node through mise, asdf or nvm put that one first, and it could not parse the
+ * bundle (#58). Under the desktop app the plugin's Node is Paseo's Electron, which acts as Node only with
+ * ELECTRON_RUN_AS_NODE; the launcher drops the variable again before it starts the provider CLI.
+ */
+export function launcherWrapper(node: string, script: string, provider: Provider, electron: boolean): string {
+  const lines = ["#!/bin/sh", `# Account Switcher ${provider} launcher, written by the plugin at every start. Do not edit.`];
+  if (electron) lines.push("ELECTRON_RUN_AS_NODE=1; ACCOUNT_SWITCHER_ELECTRON=1; export ELECTRON_RUN_AS_NODE ACCOUNT_SWITCHER_ELECTRON");
+  lines.push(`exec ${shellQuote(node)} ${shellQuote(script)} ${provider} "$@"`);
+  return `${lines.join("\n")}\n`;
+}
+
 export async function writeLaunchers(store: AccountStore): Promise<void> {
-  for (const provider of providers) await atomicWrite(launcherPath(store.root, provider), LAUNCHER_SOURCE, 0o700);
+  const script = launcherScriptPath(store.root);
+  await atomicWrite(script, LAUNCHER_SOURCE, 0o600);
+  const electron = typeof process.versions.electron === "string";
+  for (const provider of providers) await atomicWrite(launcherPath(store.root, provider), launcherWrapper(process.execPath, script, provider, electron), 0o700);
 }
 
 function commandArray(value: unknown): string[] | null {
@@ -90,7 +112,8 @@ async function discoverCommands(paseo: PaseoApi, store: AccountStore) {
 
 async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
   const { config } = await paseo.config.get(); const registry = await store.read();
-  const wrappers = providers.map(provider => launcherPath(store.root, provider));
+  // The shared bundle counts as a launcher too: `node bin/launcher.js codex` saved as the original command would recurse.
+  const wrappers = [...providers.map(provider => launcherPath(store.root, provider)), launcherScriptPath(store.root)];
   const commands = { ...registry.commands }, originals = { ...registry.originalCommands }, sourceHomes = { ...registry.sourceHomes };
   const sourceEnvironment: typeof registry.sourceEnvironment = { claude: {}, codex: {} };
   const available = { claude: false, codex: false };

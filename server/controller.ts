@@ -13,7 +13,7 @@ import { installIntegration, restoreIntegration, writeLaunchers, prepareRuntime,
 import { SwitchRefusal, SwitchService } from "./switching";
 import { createUsageService, readCredentialVersion, usageChecksEnabled, type AccountReadOptions, type QuotaAccount } from "./usage";
 import { renewExpiredClaudeToken } from "./usage/claude";
-import { LoginSessions, type LoginDependencies } from "./login";
+import { LoginRefusal, LoginSessions, type LoginDependencies } from "./login";
 import { receiptProcessRuns } from "./process-identity";
 
 const execFileAsync=promisify(execFile);
@@ -251,7 +251,7 @@ export class AccountController {
    if(account.loginToken)throw new Error("Sign-in is already open. Continue or cancel the current attempt.");
    if(account.source!=="managed")throw new Error("Add a separate account for isolated sign-in.");
    return await this.logins.start(account,registry,this.store.root,token,mode,async()=>{
-    await this.store.change(state=>{const current=accountFrom(state,id);if(current.loginToken)throw new Error("Sign-in is already open. Continue or cancel the current attempt.");if(state.bindings.some(b=>b.currentAccountId===id||b.launchAccountId===id||b.currentAccountId===null&&b.pendingAccountId===id))throw new Error("Switch agents away from this account before signing in again.");current.loginToken=token;current.login={sessionId:token,mode:account.provider==="claude"?"browser":mode};});
+    await this.store.change(state=>{const current=accountFrom(state,id);if(current.loginToken)throw new LoginRefusal("Sign-in is already open. Continue or cancel the current attempt.");if(state.bindings.some(b=>b.currentAccountId===id||b.launchAccountId===id||b.currentAccountId===null&&b.pendingAccountId===id))throw new LoginRefusal("Switch agents away from this account before signing in again.");current.loginToken=token;current.login={sessionId:token,mode:account.provider==="claude"?"browser":mode};});
     this.usage.invalidate(id);
     await this.checks.get(id)?.catch(()=>{});
    });
