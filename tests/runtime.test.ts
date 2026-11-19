@@ -55,6 +55,13 @@ describe("standalone native-provider launcher", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ args: ["--version"] });
   });
 
+  it("refuses an original command that runs the shared bundle, which would start launchers without end", async () => {
+    const { root, store } = await fixture(); await writeLaunchers(store);
+    await store.change(registry => { registry.commands.codex = [process.execPath, launcherScriptPath(root), "codex"]; });
+    const result = await run(launcherPath(root, "codex"), ["--version"], process.env);
+    expect(result.code).toBe(1); expect(result.stdout).toBe(""); expect(result.stderr).toContain("Original provider command is unavailable");
+  });
+
   it("quotes the paths it writes into the wrapper, and passes arguments through untouched", async () => {
     const script = launcherWrapper("/opt/it's node/bin/node", "/root/bin/launcher.js", "claude", false);
     expect(script).toBe("#!/bin/sh\n# Account Switcher claude launcher, written by the plugin at every start. Do not edit.\nexec '/opt/it'\\''s node/bin/node' '/root/bin/launcher.js' claude \"$@\"\n");

@@ -19,7 +19,8 @@ async function main(): Promise<void> {
   let registry;
   try { registry = await readRegistry(root); } catch { throw new LauncherError("Account registry is missing or corrupt; launch refused."); }
   const command = registry.commands[provider];
-  if (!command?.[0] || !isAbsolute(command[0]) || [join(root, "bin", "claude-launcher"), join(root, "bin", "codex-launcher")].includes(resolve(command[0]))) throw new LauncherError("Original provider command is unavailable; launch refused.");
+  const launchers = [join(root, "bin", "claude-launcher"), join(root, "bin", "codex-launcher"), join(root, "bin", "launcher.js")];
+  if (!command?.[0] || !isAbsolute(command[0]) || command.some(part => isAbsolute(part) && launchers.includes(resolve(part)))) throw new LauncherError("Original provider command is unavailable; launch refused.");
   let args = process.argv.slice(3), env = { ...process.env };
   // Set by the wrapper only to run Paseo's Electron as Node; the provider CLI must not inherit it.
   if (env.ACCOUNT_SWITCHER_ELECTRON) { delete env.ELECTRON_RUN_AS_NODE; delete env.ACCOUNT_SWITCHER_ELECTRON; }
@@ -73,7 +74,7 @@ async function main(): Promise<void> {
   await finishLogin(result.code ?? 1);
   for (const [signal, handler] of forward) process.removeListener(signal, handler);
   if (login && provider === "codex" && result.code !== 0) {
-    const quoted = `'${executable.replace(/'/g, `'\\''`)}'`;
+    const wrapper = join(root, "bin", "codex-launcher"), quoted = `'${wrapper.replace(/'/g, `'\\''`)}'`;
     process.stderr.write(`\nDevice login can require enabling device-code authentication in ChatGPT security settings. For browser login on this host, run:\n${quoted} --account-switcher-login ${account!.id} --browser\n`);
   }
   if (result.signal) { process.kill(process.pid, result.signal); return; }

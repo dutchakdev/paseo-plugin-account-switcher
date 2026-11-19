@@ -112,7 +112,8 @@ async function discoverCommands(paseo: PaseoApi, store: AccountStore) {
 
 async function discoverRuntime(paseo: PaseoApi, store: AccountStore) {
   const { config } = await paseo.config.get(); const registry = await store.read();
-  const wrappers = providers.map(provider => launcherPath(store.root, provider));
+  // The shared bundle counts as a launcher too: `node bin/launcher.js codex` saved as the original command would recurse.
+  const wrappers = [...providers.map(provider => launcherPath(store.root, provider)), launcherScriptPath(store.root)];
   const commands = { ...registry.commands }, originals = { ...registry.originalCommands }, sourceHomes = { ...registry.sourceHomes };
   const sourceEnvironment: typeof registry.sourceEnvironment = { claude: {}, codex: {} };
   const available = { claude: false, codex: false };

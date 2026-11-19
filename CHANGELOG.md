@@ -5,7 +5,7 @@
 ### Fixed
 
 - An agent no longer exits at once in a project that pins an old Node through mise, asdf or nvm (#58). The launchers began with `#!/usr/bin/env node` and took the first `node` on the agent's PATH, which could be too old to parse them. Each launcher is now a short shell script that runs the launcher bundle with the Node that runs the plugin; the provider CLI and its tools still see the project's PATH.
-- A managed account whose sign-in was lost can sign in again while agents use it (#55). Before, any bound agent blocked the sign-in, and the dialog said only "Could not start account sign-in". The sign-in is refused only while a switch involving the account runs or while its sign-in still works, and the dialog says which. A new sign-in is held to the identity the agents ran on: one with another identity is signed out again, so agents never move to someone else's subscription.
+- The sign-in dialog says why it cannot start a sign-in for an account that agents still use: switch them to another account first (#55). Before, it said only "Could not start account sign-in. Check the provider CLI", which pointed at the wrong cause.
 
 ### Changed
 
