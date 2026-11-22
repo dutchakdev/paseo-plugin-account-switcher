@@ -507,6 +507,23 @@ describe("confirmation token lifecycle", () => {
     expect((await controller.store.read()).bindings[0].launchToken).toBeNull();
   });
 
+  // Disabling integration parks every non-system binding as unconfirmed and pending its old account. Re-enabling must not
+  // leave them there: the launcher would start them on that account again, and the account stays reserved, so it can never
+  // sign in again or be removed, even when every such agent is closed.
+  it("moves bindings parked by disabling integration to the system CLI when integration is enabled again", async () => {
+    const { controller, account } = await fixture();
+    await controller.store.change(r => { r.integration.enabled = true; });
+    await controller.store.prepare("parked-agent", "codex", account.id);
+    await controller.store.change(r => { const b = r.bindings[0]; b.currentAccountId = account.id; b.launchAccountId = account.id; b.pendingAccountId = null; });
+    await controller.integration(paseo, false);
+    expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: null, pendingAccountId: account.id, status: "error" });
+    await controller.integration(paseo, true);
+    const binding = (await controller.store.read()).bindings[0];
+    expect(binding).toMatchObject({ currentAccountId: null, pendingAccountId: null, launchAccountId: "system-codex", status: "ready", error: null });
+    expect(binding.launchToken).toEqual(expect.any(String));
+    await expect(controller.login(paseo, account.id)).resolves.toBeDefined();
+  });
+
   // Agents started with no app open (schedules, heartbeats, `paseo run`) are never confirmed by the app's polling.
   it("names the account an agent runs on, confirming an unconfirmed launch by its receipt", async () => {
     const { controller, account } = await fixture();

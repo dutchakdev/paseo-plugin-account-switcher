@@ -14,6 +14,7 @@ import { SwitchRefusal, SwitchService } from "./switching";
 import { createUsageService, readCredentialVersion, usageChecksEnabled, type AccountReadOptions, type QuotaAccount } from "./usage";
 import { renewExpiredClaudeToken } from "./usage/claude";
 import { LoginRefusal, LoginSessions, type LoginDependencies } from "./login";
+const integrationDisabled="Integration is disabled. The next reload will use the system CLI.";
 import { receiptProcessRuns } from "./process-identity";
 
 const execFileAsync=promisify(execFile);
@@ -351,7 +352,12 @@ export class AccountController {
   if(this.applying.size||this.integrationChanging)throw new Error("Wait for the integration or account change to finish.");
   this.integrationChanging=true;
   try{
-   if(enabled)await installIntegration(paseo,this.store);else {await restoreIntegration(paseo,this.store);await this.store.change(r=>{for(const b of r.bindings){b.launchToken=null;if(b.currentAccountId!==`system-${b.provider}`){b.pendingAccountId=b.pendingAccountId??b.currentAccountId??b.launchAccountId;b.currentAccountId=null;b.status="error";b.error="Integration is disabled. The next reload will use the system CLI.";}}});}
+   if(enabled){
+    await installIntegration(paseo,this.store);
+    // Bindings parked by disabling still name their old account, so the launcher would start them on it again and that
+    // account stays reserved forever. Move them to the system CLI the disable promised, confirmed by the next launch.
+    await this.store.change(r=>{for(const b of r.bindings){if(b.status==="error"&&b.error===integrationDisabled&&b.currentAccountId===null&&r.integration.providers.includes(b.provider)){b.pendingAccountId=null;b.launchAccountId=`system-${b.provider}`;b.launchToken=randomUUID();b.status="ready";b.error=null;}}});
+   }else {await restoreIntegration(paseo,this.store);await this.store.change(r=>{for(const b of r.bindings){b.launchToken=null;if(b.currentAccountId!==`system-${b.provider}`){b.pendingAccountId=b.pendingAccountId??b.currentAccountId??b.launchAccountId;b.currentAccountId=null;b.status="error";b.error=integrationDisabled;}}});}
    return this.store.snapshot();
   }finally{this.integrationChanging=false;}
  }
