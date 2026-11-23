@@ -14,7 +14,6 @@ import { SwitchRefusal, SwitchService } from "./switching";
 import { createUsageService, readCredentialVersion, usageChecksEnabled, type AccountReadOptions, type QuotaAccount } from "./usage";
 import { renewExpiredClaudeToken } from "./usage/claude";
 import { LoginRefusal, LoginSessions, type LoginDependencies } from "./login";
-const integrationDisabled="Integration is disabled. The next reload will use the system CLI.";
 import { receiptProcessRuns } from "./process-identity";
 
 const execFileAsync=promisify(execFile);
@@ -34,6 +33,9 @@ const CREATION_WAIT=600000;
 // up. Failover also takes "error", which Paseo sets when a turn fails, before the plugin's turn_ended hook runs: the
 // launcher wrote the receipt when it started the CLI, so the receipt still names the account the agent started on.
 const STARTED=["idle","running"],STARTED_FOR_FAILOVER=[...STARTED,"error"];
+const INTEGRATION_DISABLED="Integration is disabled. The next reload will use the system CLI.";
+/** A binding disabling integration parked: unconfirmed, with the disabled message, its old account kept as pending. */
+function parked(binding:StoredBinding):boolean{return binding.status==="error"&&binding.error===INTEGRATION_DISABLED&&binding.currentAccountId===null;}
 export class AccountController {
  readonly store:AccountStore;
  readonly ready:Promise<void>;
@@ -353,13 +355,51 @@ export class AccountController {
   this.integrationChanging=true;
   try{
    if(enabled){
-    await installIntegration(paseo,this.store);
-    // Bindings parked by disabling still name their old account, so the launcher would start them on it again and that
-    // account stays reserved forever. Move them to the system CLI the disable promised, confirmed by the next launch.
-    await this.store.change(r=>{for(const b of r.bindings){if(b.status==="error"&&b.error===integrationDisabled&&b.currentAccountId===null&&r.integration.providers.includes(b.provider)){b.pendingAccountId=null;b.launchAccountId=`system-${b.provider}`;b.launchToken=randomUUID();b.status="ready";b.error=null;}}});
-   }else {await restoreIntegration(paseo,this.store);await this.store.change(r=>{for(const b of r.bindings){b.launchToken=null;if(b.currentAccountId!==`system-${b.provider}`){b.pendingAccountId=b.pendingAccountId??b.currentAccountId??b.launchAccountId;b.currentAccountId=null;b.status="error";b.error=integrationDisabled;}}});}
+    // Bindings parked by disabling still name their old account: the launcher would start them on it again, and the
+    // account stays reserved, so it can never sign in again or be removed. Each is settled before Paseo runs the launcher
+    // again, so a launch that overlaps this reads the account the binding ends on.
+    const resumed=await this.planParked();
+    try{await installIntegration(paseo,this.store);}
+    catch(error){await this.store.change(r=>{for(const b of r.bindings){const plan=resumed.get(b.agentId);if(plan&&parked(b)&&b.launchToken===plan.token)Object.assign(b,plan.before);}});throw error;}
+    await this.store.change(r=>{for(const b of r.bindings){
+     const plan=resumed.get(b.agentId);
+     if(!plan||!parked(b)||b.launchToken!==plan.token||b.launchAccountId!==plan.accountId)continue;
+     if(!r.integration.enabled||!r.integration.providers.includes(b.provider)){b.launchToken=null;continue;}
+     // A CLI still running proves its account; a stopped one is confirmed by the receipt of its next launch.
+     if(plan.live){b.currentAccountId=plan.accountId;b.launchToken=null;}
+     b.status="ready";b.error=null;
+    }});
+   }else {await restoreIntegration(paseo,this.store);await this.store.change(r=>{for(const b of r.bindings){b.launchToken=null;if(b.currentAccountId!==`system-${b.provider}`){b.pendingAccountId=b.pendingAccountId??b.currentAccountId??b.launchAccountId;b.currentAccountId=null;b.status="error";b.error=INTEGRATION_DISABLED;}}});}
    return this.store.snapshot();
   }finally{this.integrationChanging=false;}
+ }
+ /** Settles each parked binding while integration is still off, so no launcher reads it halfway. One whose last CLI still
+  * runs, an idle chat included, stays on the account that CLI uses. One whose CLI stopped moves to the system CLI the
+  * disable promised; its pending account was derived from the old one, not chosen. Anything unclear stays parked. */
+ private async planParked(){
+  const plans=new Map<string,{live:boolean;accountId:string;token:string|null;before:Pick<StoredBinding,"pendingAccountId"|"launchAccountId"|"launchToken">}>();
+  const state=await this.store.read(),runs=new Map<string,string|null>();
+  for(const b of state.bindings){if(!parked(b)||!state.available[b.provider])continue;const run=await this.runningAccount(b.agentId);if(run!==undefined)runs.set(b.agentId,run);}
+  await this.store.change(r=>{for(const b of r.bindings){
+   if(!runs.has(b.agentId)||!parked(b))continue;
+   const running=runs.get(b.agentId)!,live=running!==null,accountId=running??`system-${b.provider}`;
+   if(!r.accounts.some(a=>a.id===accountId&&a.provider===b.provider))continue;
+   const before={pendingAccountId:b.pendingAccountId,launchAccountId:b.launchAccountId,launchToken:b.launchToken};
+   // A live chat keeps a pending choice of another account; a stopped one restarts on the system CLI.
+   b.pendingAccountId=live&&b.pendingAccountId!==accountId?b.pendingAccountId:null;
+   b.launchAccountId=accountId;b.launchToken=live?null:randomUUID();
+   plans.set(b.agentId,{live,accountId,token:b.launchToken,before});
+  }});
+  return plans;
+ }
+ /** The account the agent's last launched CLI runs on, by its receipt: null when none runs, undefined when unclear. */
+ private async runningAccount(agentId:string):Promise<string|null|undefined>{
+  let receipt;
+  try{receipt=JSON.parse(await readFile(join(this.store.root,"receipts",encodeURIComponent(agentId)+".json"),"utf8"));}
+  catch(error){return (error as NodeJS.ErrnoException).code==="ENOENT"?null:undefined;}
+  const{pid,at,accountId}=receipt??{};
+  if(typeof pid!=="number"||!Number.isInteger(pid)||pid<=0||typeof accountId!=="string")return undefined;
+  return await receiptProcessRuns(pid,at)?accountId:null;
  }
  switcher(paseo:PaseoApi):SwitchService {
   let service=this.switches.get(paseo);if(service)return service;
