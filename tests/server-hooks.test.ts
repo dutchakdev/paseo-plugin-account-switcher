@@ -124,6 +124,33 @@ describe("an account named when the agent is created", () => {
   });
 });
 
+describe("an account named in an import label", () => {
+  afterEach(() => { controller.bindNewAgent.mockReset(); controller.bindNewAgent.mockImplementation(async () => undefined); });
+  const labelled = (reason: string, value = " Work ") => ({
+    ...opening({}, reason), labels: { "account-switcher.account": value },
+  });
+
+  it("chooses the requested account only for an interactive import", async () => {
+    const hook = start().get("agent.session_open")!;
+    controller.bindNewAgent.mockResolvedValueOnce({ accountId: "work", defaultId: null, reason: null });
+    await hook({ request: labelled("import") }, { paseo: {} });
+    expect(controller.bindNewAgent).toHaveBeenCalledWith("agent-1", "codex", null, "Work");
+    controller.bindNewAgent.mockClear();
+    await hook({ request: labelled("resume") }, { paseo: {} });
+    await hook({ request: opening({}, "import") }, { paseo: {} });
+    await hook({ request: { ...labelled("import"), purpose: "history" } }, { paseo: {} });
+    expect(controller.bindNewAgent).not.toHaveBeenCalled();
+  });
+
+  it("refuses an empty import label and propagates an unavailable account", async () => {
+    const hook = start().get("agent.session_open")!;
+    await expect(hook({ request: labelled("import", " ") }, { paseo: {} })).rejects.toThrow("Name an account");
+    expect(controller.bindNewAgent).not.toHaveBeenCalled();
+    controller.bindNewAgent.mockRejectedValueOnce(new SwitchRefusal("No Codex account is named Nobody."));
+    await expect(hook({ request: labelled("import", "Nobody") }, { paseo: {} })).rejects.toThrow("No Codex account is named Nobody.");
+  });
+});
+
 describe("the profile a session's environment names", () => {
   const saved = structuredClone(controller.registry);
   afterEach(() => { Object.assign(controller.registry, structuredClone(saved)); controller.read.mockImplementation(async () => controller.registry); controller.bindNewAgent.mockReset(); controller.bindNewAgent.mockImplementation(async () => undefined); });

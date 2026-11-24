@@ -110,6 +110,15 @@ paseo run --provider codex --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work "Review the
 
 The named account is binding: the agent starts there or is not created, and the error says why. Limits do not move it to another account. A name must belong to exactly one account of the agent's provider; use the ID when two accounts share a name. Creation is refused when no such account exists, its sign-in is still in progress, the official sign-in check does not confirm it, **Always use the default** is on and the account is not the default, account switching is off for the provider, or the agent's provider is not Claude or Codex. The variable works only at creation: it reaches neither the provider CLI nor later sessions of the agent, and set in a provider's configured environment it selects nothing. The chat records the start when the account is not the default. Afterwards the agent behaves like any other: switching, and switching when a limit runs out, follow your settings.
 
+On Paseo 0.16 and later, name the account when importing a provider session into Paseo for the first time:
+
+```sh
+paseo import <session-id> --provider claude --label 'account-switcher.account=Work'
+```
+
+The named account must be signed in and allowed by the provider's account switching settings. Paseo refuses the import if the plugin cannot select it. The label applies to the first import. Restoring an archived Paseo agent keeps its existing account.
+
+
 ## Switch an existing chat
 
 1. Select the account chip beside the message field to open **Account** over the current chat.

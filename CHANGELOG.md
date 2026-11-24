@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Choose the account for a CLI import using the `account-switcher.account` label (#53).
+
 ### Fixed
 
 - An agent no longer exits at once in a project that pins an old Node through mise, asdf or nvm (#58). The launchers began with `#!/usr/bin/env node` and took the first `node` on the agent's PATH, which could be too old to parse them. Each launcher is now a short shell script that runs the launcher bundle with the Node that runs the plugin; the provider CLI and its tools still see the project's PATH.
