@@ -15,6 +15,7 @@ import type { AccountNote } from "./shared/timeline";
 const MODEL_ENV="PASEO_ACCOUNT_SWITCHER_MODEL";
 // Set by whoever creates the agent (e.g. `paseo run --env PASEO_ACCOUNT_SWITCHER_ACCOUNT=Work`): the account it starts on.
 const ACCOUNT_ENV="PASEO_ACCOUNT_SWITCHER_ACCOUNT";
+const IMPORT_ACCOUNT_LABEL="account-switcher.account";
 // The prompt that resumes an agent's work on the account it was switched to.
 const CONTINUE="Continue.";
 const reason=(error:unknown)=>error instanceof Error?error.message:String(error);
@@ -139,9 +140,17 @@ export default function contribute(server:PluginServerContext){
   await controller.ready;
   // Neither hint from the creation reaches the CLI, on this or any later session of the agent.
   const {[MODEL_ENV]:model,[ACCOUNT_ENV]:account,...env}=request.env;
-  const creating=request.purpose==="interactive"&&request.reason==="create",requested=account?.trim()||null;
-  if(creating&&requested&&request.provider!=="claude"&&request.provider!=="codex")throw new SwitchRefusal(`Account Switcher manages only Claude Code and Codex accounts, so the ${request.provider} agent cannot start on ${requested}.`);
-  if(creating&&(request.provider==="claude"||request.provider==="codex")){await controller.ensureRuntime(paseo);const bound=await controller.switcher(paseo).bindNewAgent(request.agentId,request.provider,model||null,requested);
+  const creating=request.purpose==="interactive"&&request.reason==="create";
+  const importing=request.purpose==="interactive"&&request.reason==="import";
+  // Newer daemons include labels in session-open requests; the pinned 0.11 SDK does not declare them.
+  const labelled=request as typeof request&{labels?:Readonly<Record<string,string>>};
+  const importAccount=importing?labelled.labels?.[IMPORT_ACCOUNT_LABEL]:undefined;
+  if(importAccount!==undefined&&!importAccount.trim())throw new SwitchRefusal("Name an account in the account-switcher.account import label.");
+  const requested=(importing?importAccount:account)?.trim()||null;
+  const selecting=creating||importAccount!==undefined;
+  if(selecting&&requested&&request.provider!=="claude"&&request.provider!=="codex")throw new SwitchRefusal(`Account Switcher manages only Claude Code and Codex accounts, so the ${request.provider} agent cannot start on ${requested}.`);
+  if(selecting&&(request.provider==="claude"||request.provider==="codex")){await controller.ensureRuntime(paseo);const bound=await controller.switcher(paseo).bindNewAgent(request.agentId,request.provider,model||null,requested);
+   if(importing&&requested&&!bound)throw new SwitchRefusal("This imported session already has an account binding. Switch it from the composer.");
    const reason=bound?.reason;
    if(bound&&reason){
     const started=await note(request.agentId,async()=>{const state=await controller.store.read(),to=labelOf(state,bound.accountId);return to?{kind:"started",from:labelOf(state,bound.defaultId),to,reason}:null;});
