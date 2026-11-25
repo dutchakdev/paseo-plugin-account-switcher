@@ -8,7 +8,7 @@ import type { PaseoApi } from "@getpaseo/client";
 
 const mocks = vi.hoisted(() => ({
   launchLogin: vi.fn(), probeAccount: vi.fn(), removeAccountCredentials: vi.fn(),
-  prepareRuntime: vi.fn(), reconcileIntegration: vi.fn(), execFile: vi.fn(), renewExpiredClaudeToken: vi.fn(),
+  prepareRuntime: vi.fn(), reconcileIntegration: vi.fn(), installIntegration: vi.fn(), execFile: vi.fn(), renewExpiredClaudeToken: vi.fn(),
   failRemovePath: undefined as string | undefined,
   usage: {
     checksEnabled: vi.fn(async () => true),
@@ -37,7 +37,7 @@ vi.mock("../server/auth", () => ({
 }));
 vi.mock("../server/integration", () => ({
   writeLaunchers: async () => {}, prepareRuntime: mocks.prepareRuntime, reconcileIntegration: mocks.reconcileIntegration,
-  installIntegration: async () => {}, restoreIntegration: async () => {},
+  installIntegration: mocks.installIntegration, restoreIntegration: async () => {},
 }));
 vi.mock("../server/profiles", () => ({ prepareProfile: async () => {} }));
 vi.mock("../server/usage", () => ({ createUsageService: () => mocks.usage, readCredentialVersion: async () => "fixture-version" }));
@@ -62,6 +62,7 @@ beforeEach(() => {
   mocks.removeAccountCredentials.mockReset().mockResolvedValue(undefined);
   mocks.prepareRuntime.mockReset().mockResolvedValue(undefined);
   mocks.reconcileIntegration.mockReset().mockResolvedValue(undefined);
+  mocks.installIntegration.mockReset().mockResolvedValue(undefined);
   mocks.renewExpiredClaudeToken.mockReset().mockResolvedValue(false);
   mocks.execFile.mockReset().mockImplementation((...args: unknown[]) => { (args.at(-1) as (error: null, stdout: string) => void)(null, ""); });
   mocks.usage.close.mockResolvedValue(undefined);
@@ -505,6 +506,69 @@ describe("confirmation token lifecycle", () => {
     await controller.store.prepare("receipt-agent", "codex", "system-codex");
     expect((await controller.snapshot(paseo)).bindings[0].currentAccountId).toBeNull();
     expect((await controller.store.read()).bindings[0].launchToken).toBeNull();
+  });
+
+  // Disabling integration parks every non-system binding as unconfirmed and pending its old account. Re-enabling must not
+  // leave them there: the launcher would start them on that account again, and the account stays reserved, so it can never
+  // sign in again or be removed, even when every such agent is closed. A chat whose CLI still runs keeps that account.
+  describe("bindings parked by disabling integration", () => {
+    async function parkedAgent(receiptPid?: number) {
+      const { controller, account } = await fixture();
+      await controller.store.change(r => { r.integration.enabled = true; });
+      await controller.store.prepare("parked-agent", "codex", account.id);
+      await controller.store.change(r => { const b = r.bindings[0]; b.currentAccountId = account.id; b.launchAccountId = account.id; b.pendingAccountId = null; });
+      if (receiptPid !== undefined) {
+        await mkdir(join(controller.store.root, "receipts"), { recursive: true });
+        await writeFile(join(controller.store.root, "receipts", "parked-agent.json"), JSON.stringify({ accountId: account.id, launchToken: null, pid: receiptPid, at: new Date().toISOString() }));
+      }
+      await controller.integration(paseo, false);
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: null, pendingAccountId: account.id, status: "error" });
+      return { controller, account };
+    }
+
+    it("moves one whose CLI stopped to the system CLI and frees the account", async () => {
+      const { controller, account } = await parkedAgent(spawnSync(process.execPath, ["-e", ""]).pid!);
+      await controller.integration(paseo, true);
+      const binding = (await controller.store.read()).bindings[0];
+      expect(binding).toMatchObject({ currentAccountId: null, pendingAccountId: null, launchAccountId: "system-codex", status: "ready", error: null });
+      expect(binding.launchToken).toEqual(expect.any(String));
+      await expect(controller.login(paseo, account.id)).resolves.toBeDefined();
+    });
+
+    it("moves one that never launched through the plugin to the system CLI", async () => {
+      const { controller } = await parkedAgent();
+      await controller.integration(paseo, true);
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ pendingAccountId: null, launchAccountId: "system-codex", status: "ready" });
+    });
+
+    it("keeps an idle chat whose CLI still runs on the account that CLI uses", async () => {
+      const { controller, account } = await parkedAgent(process.pid);
+      await controller.integration(paseo, true);
+      const binding = (await controller.store.read()).bindings[0];
+      expect(binding).toMatchObject({ currentAccountId: account.id, pendingAccountId: null, launchAccountId: account.id, launchToken: null, status: "ready", error: null });
+      await expect(controller.login(paseo, account.id)).rejects.toThrow();
+    });
+
+    it("gives a launch that overlaps re-enabling the account the registry ends on", async () => {
+      const { controller } = await parkedAgent(spawnSync(process.execPath, ["-e", ""]).pid!);
+      // The agent relaunches as soon as Paseo runs the launcher again, before the integration change returns.
+      mocks.installIntegration.mockImplementation(async (_paseo: unknown, store: AccountStore) => {
+        await store.change(r => { r.integration.enabled = true; });
+        const b = (await store.read()).bindings[0];
+        await writeFile(join(store.root, "receipts", "parked-agent.json"), JSON.stringify({ accountId: b.launchAccountId ?? b.currentAccountId, launchToken: b.launchToken, pid: process.pid, at: new Date().toISOString() }));
+      });
+      await controller.integration(paseo, true);
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ launchAccountId: "system-codex", status: "ready" });
+      await controller.snapshot(paseo);
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: "system-codex", launchToken: null, status: "ready" });
+    });
+
+    it("leaves one parked when enabling integration fails", async () => {
+      const { controller, account } = await parkedAgent();
+      mocks.installIntegration.mockRejectedValue(new Error("Paseo did not apply provider integration."));
+      await expect(controller.integration(paseo, true)).rejects.toThrow("Paseo did not apply provider integration.");
+      expect((await controller.store.read()).bindings[0]).toMatchObject({ currentAccountId: null, pendingAccountId: account.id, launchAccountId: account.id, launchToken: null, status: "error" });
+    });
   });
 
   // Agents started with no app open (schedules, heartbeats, `paseo run`) are never confirmed by the app's polling.
