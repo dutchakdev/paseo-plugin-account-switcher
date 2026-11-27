@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1 - 2026-11-28
+
+### Changed
+
+- Verified Account Switcher with the Paseo 0.18 SDK and daemon, including the accounts and usage APIs.
+
 ## 0.11.0 - 2026-11-24
 
 ### Added
