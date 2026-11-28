@@ -27,6 +27,8 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 - The official **Paseo** CLI and at least one of **Claude Code** or **Codex** available to the daemon. A provider whose CLI is missing is skipped; after installing it, reload the plugin and select **Enable** in its section.
 - Claude or ChatGPT subscription authentication. API keys and custom authentication/provider overrides are unsupported.
 
+The plugin was checked against the Paseo 0.18.1 SDK and its daemon's account and usage APIs.
+
 The interface is in English. Reset dates use the viewing device's local time zone. See [installation](docs/installation.md) for remote hosts and [verification](docs/verification.md) for the scope of recorded testing.
 
 ## Install
